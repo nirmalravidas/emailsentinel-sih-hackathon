@@ -1,0 +1,57 @@
+Received: from mx.recipient-college.example (mx.recipient-college.example [192.0.2.25])
+	by mail.student-inbox.example with ESMTPS id 4f8a21
+	for <student@student-inbox.example>; Wed, 23 Sep 2026 09:14:07 +0530
+Received: from relay1.bulk-mailer.example (relay1.bulk-mailer.example [198.51.100.44])
+	by mx.recipient-college.example with ESMTP id 9c2b77;
+	Wed, 23 Sep 2026 03:44:05 +0000
+Received: from mail.micros0ft-security.com (unknown [8.8.8.8])
+	by relay1.bulk-mailer.example with ESMTP id 771d09;
+	Wed, 23 Sep 2026 03:44:01 +0000
+Received: from [10.0.0.15] (localhost [127.0.0.1])
+	by mail.micros0ft-security.com with SMTP id 1a2b3c;
+	Wed, 23 Sep 2026 03:43:58 +0000
+Authentication-Results: mx.recipient-college.example;
+	spf=fail (sender IP is 8.8.8.8) smtp.mailfrom=micros0ft-security.com;
+	dkim=none (message not signed);
+	dmarc=fail (p=reject) header.from=micros0ft-security.com
+Received-SPF: fail (mx.recipient-college.example: domain of micros0ft-security.com does not designate 8.8.8.8 as permitted sender)
+Return-Path: <bounce@relay-node7.example.net>
+From: Microsoft Support <support@micros0ft-security.com>
+Reply-To: attacker@example.com
+To: student@student-inbox.example
+Subject: Urgent: Verify Your Account
+Date: Wed, 23 Sep 2026 03:43:55 +0000
+Message-ID: <7f3a9c1e2b4d@mail.micros0ft-security.com>
+MIME-Version: 1.0
+X-Sample-Note: Fictional demo email. 8.8.8.8 is only a placeholder public IP used to demonstrate geolocation; it does not imply Google sent this message.
+Content-Type: multipart/alternative; boundary="=_sentinel_boundary_01"
+
+--=_sentinel_boundary_01
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Dear User,
+
+Your account will be suspended within 24 hours.
+Click the link below to verify your account immediately.
+You must confirm your password and verify your identity to keep your mailbox active.
+
+http://example-login-security.com/verify
+
+Regards,
+Microsoft Security Team
+
+--=_sentinel_boundary_01
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+<html><body>
+<p>Dear User,</p>
+<p>Your account will be suspended within 24 hours.<br>
+Click the link below to verify your account immediately.<br>
+You must confirm your password and verify your identity to keep your mailbox active.</p>
+<p><a href="http://example-login-security.com/verify">http://example-login-security.com/verify</a></p>
+<p>Regards,<br>Microsoft Security Team</p>
+</body></html>
+
+--=_sentinel_boundary_01--

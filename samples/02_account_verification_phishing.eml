@@ -1,0 +1,18 @@
+From: Security Desk <security@micros0ft-login.example.com>
+To: Jordan Lee <jordan.lee@example.org>
+Reply-To: verify-account@proton.example.net
+Return-Path: <bounce@mailer.example.net>
+Subject: Urgent: Account will be suspended today
+Date: Thu, 24 Sep 2026 09:05:00 +0000
+Received: from workstation (unknown [198.51.100.44]) by mail.example.net with ESMTPS; Thu, 24 Sep 2026 09:04:00 +0000
+Received: from relay.example.net (relay.example.net [203.0.113.18]) by mail.example.net with ESMTP; Thu, 24 Sep 2026 09:05:00 +0000
+Authentication-Results: mail.example.net; spf=fail; dkim=none; dmarc=fail
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+Your account will be suspended within 24 hours.
+
+Verify your password and security code immediately at
+http://micros0ft-login.example.com/verify-account or access will be revoked.
+
+Security Team

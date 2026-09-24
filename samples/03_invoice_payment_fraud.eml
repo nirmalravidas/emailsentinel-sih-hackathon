@@ -1,0 +1,18 @@
+From: Accounts Payable <billing@vendor-invoice.example.net>
+To: Finance Team <finance@example.org>
+Reply-To: urgent-payments@outlook.example.com
+Subject: Final invoice overdue - payment required
+Date: Thu, 24 Sep 2026 09:10:00 +0000
+Received: from billing-host (billing-host [192.0.2.77]) by mx.example.org with ESMTP; Thu, 24 Sep 2026 09:09:00 +0000
+Authentication-Results: mx.example.org; spf=softfail; dkim=fail; dmarc=fail
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+This is a final notice for invoice INV-4831.
+
+Please wire the outstanding amount of $4,850 today to avoid a late fee. Use
+the payment instructions at http://vendor-invoice.example.net/pay-now and do
+not call the office because the account manager is unavailable.
+
+Regards,
+Accounts Payable

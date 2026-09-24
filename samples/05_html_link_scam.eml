@@ -1,0 +1,13 @@
+From: Rewards Center <rewards@contoso-prize.example.com>
+To: Casey Brown <casey.brown@example.org>
+Subject: You have won a limited-time reward
+Date: Thu, 24 Sep 2026 09:20:00 +0000
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+
+<html><body>
+<p>Congratulations! You have been selected for a limited-time reward.</p>
+<p>Claim it now before it expires:</p>
+<p><a href="https://claim-reward.example.net/login">Confirm your reward</a></p>
+<p>Enter your account information to receive the prize.</p>
+</body></html>

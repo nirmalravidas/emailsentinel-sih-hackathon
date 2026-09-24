@@ -1,0 +1,20 @@
+From: Human Resources <hr@example.org>
+To: Taylor Smith <taylor.smith@example.org>
+Subject: Updated benefits form - action required
+Date: Thu, 24 Sep 2026 09:15:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="demo-boundary-04"
+
+--demo-boundary-04
+Content-Type: text/plain; charset="utf-8"
+
+Please open the attached benefits form and return it before the end of day.
+Contact HR if you have questions.
+
+--demo-boundary-04
+Content-Type: application/octet-stream; name="benefits_update.xlsm"
+Content-Disposition: attachment; filename="benefits_update.xlsm"
+Content-Transfer-Encoding: base64
+
+VGhpcyBpcyBhIGRlbW8gYXR0YWNobWVudCBmb3IgdGVzdGluZyBvbmx5Lg==
+--demo-boundary-04--

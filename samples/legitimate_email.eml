@@ -1,0 +1,32 @@
+Received: from mail.collegemail.example (mail.collegemail.example [203.0.113.10])
+	by mx.student-inbox.example with ESMTPS id 5d1e88
+	for <student@student-inbox.example>; Tue, 22 Sep 2026 10:02:41 +0530
+Received: from [10.20.1.34] (labpc-34.collegemail.example [10.20.1.34])
+	by mail.collegemail.example with ESMTPSA id 3b7f12;
+	Tue, 22 Sep 2026 10:02:38 +0530
+Authentication-Results: mx.student-inbox.example;
+	spf=pass smtp.mailfrom=collegemail.example;
+	dkim=pass header.d=collegemail.example;
+	dmarc=pass header.from=collegemail.example
+Return-Path: <a.kumar@collegemail.example>
+From: Dr. A. Kumar <a.kumar@collegemail.example>
+To: student@student-inbox.example
+Subject: Project review schedule for next week
+Date: Tue, 22 Sep 2026 10:02:30 +0530
+Message-ID: <20260922100230.3b7f12@mail.collegemail.example>
+MIME-Version: 1.0
+X-Sample-Note: Fictional demo email for comparison.
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Hi all,
+
+The project review sessions will be held on Thursday between 2 PM and 4 PM in the
+computer lab. Please bring your progress report and a short demo of your work.
+
+The updated timetable is on the department notice board. If you have a clash with
+another class, reply to this email and I will move your slot.
+
+Thanks,
+Dr. Kumar
+Department of Computer Science and Engineering
