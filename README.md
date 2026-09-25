@@ -43,31 +43,6 @@ EmailSentinel is a modular monolith with an optional asynchronous worker:
 
 ![EmailSentinel architecture overview](sih-arch.svg)
 
-```text
-Browser dashboard / API client
-              |
-              v
-        FastAPI application
-              |
-              v
-     Shared forensic pipeline
-              |
-   +----------+-----------+------------------+
-   |          |           |                  |
- Parser     NLP       Header/auth        URL/domain
-   |          |           |                  |
-   +----------+-----------+------------------+
-              |
-   +----------+-----------+------------------+
-   |          |           |                  |
- Geolocation DNS     Threat intelligence  Risk engine
-              |
-              v
-     JSON report and persisted case
-              |
-   PostgreSQL / SQLite, Redis, Celery
-```
-
 ### Runtime modes
 
 **Local mode** uses the project virtual environment and SQLite. Redis is optional and external lookups fail
@@ -75,41 +50,6 @@ gracefully. This is the fastest mode for development.
 
 **Docker mode** runs PostgreSQL, Redis, an Alembic migration job, the FastAPI API, and a Celery worker.
 This is the preferred mode for testing the complete service topology.
-
-## Repository Layout
-
-```text
-emailsentinel/
-├── app/
-│   ├── main.py                         FastAPI bootstrap and frontend serving
-│   ├── config.py                       Environment-backed configuration
-│   ├── api/routes.py                    Analysis, cases, campaigns, alerts, reports
-│   ├── models/schemas.py                Pydantic request and response schemas
-│   ├── database/database.py             SQLAlchemy repository functions
-│   ├── database/models/entities.py      PostgreSQL-ready ORM entities
-│   ├── services/
-│   │   ├── analysis_service.py          Shared synchronous/Celery pipeline
-│   │   ├── email_parser.py              MIME, headers, body, URLs, attachments
-│   │   ├── nlp_service.py               ML classifier and heuristics
-│   │   ├── header_analyzer.py            Identity, relay, SPF/DKIM/DMARC
-│   │   ├── threat_intel_service.py       External reputation and infrastructure checks
-│   │   ├── ip_intelligence.py             Infrastructure geolocation
-│   │   ├── dns_service.py                A, MX, TXT, and optional WHOIS
-│   │   ├── risk_engine.py                 Explainable risk scoring
-│   │   ├── privacy_service.py             Optional sensitive-field masking
-│   │   └── report_service.py              PDF report generation
-│   └── workers/                          Celery application and tasks
-├── frontend/                             Dashboard HTML, CSS, and JavaScript
-├── alembic/                              Database migrations
-├── data/email_dataset.csv                Demonstration training data
-├── models/email_nlp_model.joblib         Saved demonstration model
-├── samples/                              Example `.eml` evidence
-├── Dockerfile
-├── docker-compose.yml
-├── requirements.txt
-├── .env.example                          Public key-only configuration template
-└── README.md
-```
 
 ## Requirements
 
@@ -468,32 +408,3 @@ The expected core checks are:
 - Retention cleanup is opt-in through `RETENTION_ENABLED=true`.
 - The MVP has no authentication or role-based access control. Do not expose it directly to the public
   internet without adding access control, rate limiting, TLS, and operational logging.
-
-## Known Limitations
-
-- The demonstration dataset is small and is not representative of production email traffic.
-- The model is not calibrated, multilingual, or continuously monitored for drift.
-- Received headers and receiver-reported authentication headers can be forged.
-- Independent authentication checks depend on DNS, DKIM signing keys, network access, and message integrity.
-- Geolocation is approximate infrastructure location, not attacker identity or physical location.
-- VPN detection is provider-dependent; the MVP uses hosting/proxy metadata where available rather than a
-  dedicated commercial VPN database.
-- Tor, DNSBL, AbuseIPDB, URLhaus, and ThreatFox data can be stale or rate-limited.
-- Attachments are hashed and classified by metadata; there is no malware sandbox, YARA engine, or antivirus
-  scanning in the MVP.
-- The map depends on public geolocation coordinates and external OpenStreetMap tiles; unavailable network
-  lookups fall back to structured report data.
-- Alert delivery is recorded in the database; external notification integrations are future work.
-- Authentication, RBAC, tenant isolation, encryption at rest, legal holds, and full compliance workflows
-  are not included.
-
-## Responsible Use
-
-Use EmailSentinel only on email evidence that you are authorized to inspect. Treat third-party reputation,
-geolocation, authentication, and attribution results as investigative leads. Preserve original evidence and
-follow your organization's privacy, retention, legal, and incident-response procedures.
-
-## License
-
-No license has been selected for this repository yet. Add an appropriate `LICENSE` file before publishing
-the project for external reuse.
