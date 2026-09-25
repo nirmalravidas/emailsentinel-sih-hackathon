@@ -41,6 +41,8 @@ a qualified analyst.
 
 EmailSentinel is a modular monolith with an optional asynchronous worker:
 
+![EmailSentinel architecture overview](sih-arch.svg)
+
 ```text
 Browser dashboard / API client
               |
