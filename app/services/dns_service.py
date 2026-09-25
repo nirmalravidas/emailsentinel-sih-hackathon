@@ -13,6 +13,7 @@ import dns.exception
 import dns.resolver
 
 from app import config
+from app.services import cache_service
 
 logger = logging.getLogger("emailsentinel.dns")
 RECORD_TYPES = ("A", "MX", "TXT")
@@ -26,6 +27,10 @@ def _resolver() -> dns.resolver.Resolver:
 
 
 def _query(domain: str, rtype: str) -> Dict[str, Any]:
+    cache_key = f"domain:dns:{rtype}:{domain.lower()}"
+    cached = cache_service.get_json(cache_key)
+    if isinstance(cached, dict):
+        return cached
     try:
         answers = _resolver().resolve(domain, rtype)
         values: List[str] = []
@@ -36,11 +41,17 @@ def _query(domain: str, rtype: str) -> Dict[str, Any]:
                 values.append(b"".join(rdata.strings).decode("utf-8", errors="replace"))
             else:
                 values.append(rdata.to_text())
-        return {"values": values}
+        result = {"values": values}
+        cache_service.set_json(cache_key, result, config.REDIS_DNS_TTL)
+        return result
     except dns.resolver.NXDOMAIN:
-        return {"values": [], "error": "NXDOMAIN (domain does not exist)"}
+        result = {"values": [], "error": "NXDOMAIN (domain does not exist)"}
+        cache_service.set_json(cache_key, result, config.REDIS_DNS_TTL)
+        return result
     except dns.resolver.NoAnswer:
-        return {"values": []}
+        result = {"values": []}
+        cache_service.set_json(cache_key, result, config.REDIS_DNS_TTL)
+        return result
     except dns.exception.Timeout:
         return {"values": [], "error": "timeout"}
     except dns.resolver.NoNameservers:

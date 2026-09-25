@@ -9,19 +9,45 @@ load_dotenv(BASE_DIR / ".env")
 
 
 def _bool(name: str, default: bool) -> bool:
-    return os.getenv(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
 
 
-DATASET_PATH = Path(os.getenv("DATASET_PATH", BASE_DIR / "data" / "email_dataset.csv"))
-MODEL_PATH = Path(os.getenv("MODEL_PATH", BASE_DIR / "models" / "email_nlp_model.joblib"))
-DATABASE_PATH = Path(os.getenv("DATABASE_PATH", BASE_DIR / "data" / "emailsentinel.db"))
+def _env(name: str, default: str) -> str:
+    value = os.getenv(name)
+    return value.strip() if value and value.strip() else default
+
+
+DATASET_PATH = Path(_env("DATASET_PATH", str(BASE_DIR / "data" / "email_dataset.csv")))
+MODEL_PATH = Path(_env("MODEL_PATH", str(BASE_DIR / "models" / "email_nlp_model.joblib")))
+DATABASE_PATH = Path(_env("DATABASE_PATH", str(BASE_DIR / "data" / "emailsentinel.db")))
+DATABASE_URL = _env("DATABASE_URL", f"sqlite:///{DATABASE_PATH}")
+DATABASE_ECHO = _bool("DATABASE_ECHO", False)
 
 # External lookups (all optional and fail gracefully)
 ENABLE_GEOLOCATION = _bool("ENABLE_GEOLOCATION", True)
 ENABLE_DNS = _bool("ENABLE_DNS", True)
 ENABLE_WHOIS = _bool("ENABLE_WHOIS", False)  # slow and often rate limited, off by default
-GEO_API_URL = os.getenv("GEO_API_URL", "http://ip-api.com/json")
-HTTP_TIMEOUT = float(os.getenv("HTTP_TIMEOUT", "4"))
-DNS_TIMEOUT = float(os.getenv("DNS_TIMEOUT", "2.5"))
+GEO_API_URL = _env("GEO_API_URL", "http://ip-api.com/json")
+HTTP_TIMEOUT = float(_env("HTTP_TIMEOUT", "4"))
+DNS_TIMEOUT = float(_env("DNS_TIMEOUT", "2.5"))
 
-MAX_EMAIL_BYTES = int(os.getenv("MAX_EMAIL_BYTES", str(5 * 1024 * 1024)))
+MAX_EMAIL_BYTES = int(_env("MAX_EMAIL_BYTES", str(5 * 1024 * 1024)))
+
+# Redis is optional for local/offline analysis. PostgreSQL remains the source of truth.
+REDIS_ENABLED = _bool("REDIS_ENABLED", True)
+REDIS_URL = _env("REDIS_URL", "redis://localhost:6379/0")
+REDIS_TIMEOUT = float(_env("REDIS_TIMEOUT", "1.5"))
+REDIS_DNS_TTL = int(_env("REDIS_DNS_TTL", "3600"))
+REDIS_IP_TTL = int(_env("REDIS_IP_TTL", "21600"))
+REDIS_WHOIS_TTL = int(_env("REDIS_WHOIS_TTL", "86400"))
+REDIS_THREAT_INTEL_TTL = int(_env("REDIS_THREAT_INTEL_TTL", "3600"))
+
+CELERY_BROKER_URL = _env("CELERY_BROKER_URL", REDIS_URL)
+CELERY_RESULT_BACKEND = _env("CELERY_RESULT_BACKEND", REDIS_URL)
+CELERY_SOFT_TIME_LIMIT = int(_env("CELERY_SOFT_TIME_LIMIT", "240"))
+CELERY_TIME_LIMIT = int(_env("CELERY_TIME_LIMIT", "300"))
+CELERY_RESULT_EXPIRES = int(_env("CELERY_RESULT_EXPIRES", "86400"))
+ASYNC_ANALYSIS_ENABLED = _bool("ASYNC_ANALYSIS_ENABLED", False)

@@ -39,7 +39,7 @@ POST /api/v1/analyze-email  (.eml upload OR raw text)
         |
    risk_engine         -> explainable additive score, level, reasons
         |
-   SQLite (cases)  +  one JSON response
+  SQLAlchemy (PostgreSQL in deployment, SQLite for local smoke tests) + one JSON response
 ```
 
 ```
@@ -50,7 +50,9 @@ emailsentinel/
 │   ├── api/routes.py           endpoints + pipeline orchestration
 │   ├── services/               one module per analysis stage (see diagram)
 │   ├── models/schemas.py       Pydantic models (drive Swagger docs)
-│   └── database/database.py    SQLite case storage
+│   ├── database/base.py        SQLAlchemy declarative metadata
+│   ├── database/models/         PostgreSQL-ready case and intelligence entities
+│   └── database/database.py    SQLAlchemy session/repository compatibility layer
 ├── data/email_dataset.csv      demo training set (text,label)
 ├── models/email_nlp_model.joblib   trained model (auto-trained if missing)
 ├── samples/                    phishing_email.eml, legitimate_email.eml
@@ -135,6 +137,73 @@ pip install -r requirements.txt
 python -m app.services.nlp_service   # trains models/email_nlp_model.joblib (also auto-runs on first start)
 cp .env.example .env                 # optional
 ```
+
+### Database migrations
+
+The persistent schema is defined by SQLAlchemy 2.x models and managed in production by Alembic.
+Set `DATABASE_URL` to PostgreSQL in `.env`, for example
+`postgresql+psycopg://emailsentinel:password@localhost:5432/emailsentinel`, then run:
+
+```bash
+alembic upgrade head
+```
+
+For local prototype smoke tests the default is `sqlite:///data/emailsentinel.db`. The application
+keeps a development-only `create_all` fallback for that SQLite database; it is not the production
+migration strategy. To create a future migration after changing a model:
+
+```bash
+alembic revision --autogenerate -m "describe the schema change"
+alembic upgrade head
+```
+
+The initial schema includes cases, evidence, metadata, header/authentication analysis, URL/domain/IP
+indicators, IOCs, campaigns and relationships, analysis tasks, audit logs, and evidence chain-of-custody
+events. Raw email bodies are not stored in the case tables.
+
+Uploaded `.eml` files are basename-sanitized, size-limited, restricted by extension, and identified with
+SHA-256. The response exposes the evidence hash and the database records an `INGESTED` event; raw email
+content is not persisted by the current ingestion path.
+
+### Redis and Celery
+
+Redis is configured as an optional cache and Celery broker/result backend. Cache failures degrade to
+direct lookups; Redis is never the source of truth. Start a worker with:
+
+```bash
+celery -A app.workers.celery_app.celery_app worker --loglevel=INFO
+```
+
+Set `ASYNC_ANALYSIS_ENABLED=true` to make `POST /api/v1/analyze-email` return `202 Accepted` with
+`case_id`, `analysis_id`, and `task_id`. Poll `GET /api/v1/analysis/{analysis_id}` until the persisted
+status is `COMPLETED`, then read its `result` forensic report. The default `false` keeps the prototype's
+synchronous response for local compatibility. Celery workers require a reachable Redis instance.
+
+Case investigation endpoints are available at `GET /api/v1/cases/{case_id}`, `/timeline`, `/iocs`,
+`/correlation`, and `/report`. Use `GET /api/v1/cases/{case_id}/report.pdf` to download a PDF copy
+of the complete forensic report, including risk assessment, IOCs, relay analysis, and infrastructure
+geolocation. IOC values are normalized and persisted in PostgreSQL through the
+`iocs` and `case_iocs` tables. `/correlation` reports shared indicators and a bounded similarity score;
+shared infrastructure supports campaign investigation but does not prove common attacker identity.
+Analysts can update workflow state with `PATCH /api/v1/cases/{case_id}/status`; status changes and
+report retrieval are included in the audit-backed timeline.
+
+High-risk analyses (`HIGH` or `CRITICAL`) create one idempotent database alert. Alerts are available
+through `GET /api/v1/alerts` and `GET /api/v1/alerts/{alert_id}` with `RECORDED` delivery status.
+External email, webhook, Slack, and Teams delivery remain future providers behind the alert service
+abstraction.
+
+### Docker Compose
+
+Copy `.env.example` to `.env`, replace `POSTGRES_PASSWORD`, then start the complete backend:
+
+```bash
+docker compose up --build
+```
+
+Compose starts PostgreSQL, Redis, an Alembic migration job, the FastAPI API, and a Celery worker.
+Swagger is available at `http://127.0.0.1:8000/docs`. Stop services with `docker compose down`; add
+`-v` only when intentionally deleting the PostgreSQL and Redis volumes.
 
 ## 8. Running the server
 

@@ -1,0 +1,38 @@
+"""Persistent EmailSentinel domain models."""
+from app.database.models.entities import (
+    AnalysisCase,
+    AnalysisTask,
+    Alert,
+    AuditLog,
+    AuthenticationResult,
+    CaseIOC,
+    Campaign,
+    CampaignIndicator,
+    DomainIndicator,
+    EmailEvidence,
+    EmailMetadata,
+    EvidenceEvent,
+    HeaderAnalysis,
+    IOC,
+    IPIndicator,
+    URLIndicator,
+)
+
+__all__ = [
+    "AnalysisCase",
+    "AnalysisTask",
+    "Alert",
+    "AuditLog",
+    "AuthenticationResult",
+    "CaseIOC",
+    "Campaign",
+    "CampaignIndicator",
+    "DomainIndicator",
+    "EmailEvidence",
+    "EmailMetadata",
+    "EvidenceEvent",
+    "HeaderAnalysis",
+    "IOC",
+    "IPIndicator",
+    "URLIndicator",
+]

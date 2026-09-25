@@ -100,3 +100,15 @@ class CasesResponse(BaseModel):
     limit: int
     offset: int
     cases: List[CaseRecord]
+
+
+class AnalysisStatusResponse(BaseModel):
+    analysis_id: str
+    status: str
+    case_id: Optional[str] = None
+    result: Optional[Dict[str, Any]] = None
+
+
+class CaseStatusUpdate(BaseModel):
+    status: str = Field(..., pattern="^(NEW|ANALYZING|REVIEW|CONFIRMED_THREAT|FALSE_POSITIVE|CLOSED)$")
+    analyst_notes: Optional[str] = Field(None, max_length=10000)

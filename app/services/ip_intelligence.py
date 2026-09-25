@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from app import config
+from app.services import cache_service
 
 logger = logging.getLogger("emailsentinel.ip")
 
@@ -36,6 +37,10 @@ def geolocate(ip: str) -> Dict[str, Any]:
         return {"ip": ip, "status": "disabled", "message": "Geolocation disabled via ENABLE_GEOLOCATION"}
     if ip in _cache:
         return _cache[ip]
+    cached = cache_service.get_json(f"ip:intelligence:{ip}")
+    if isinstance(cached, dict):
+        _cache[ip] = cached
+        return cached
 
     url = f"{config.GEO_API_URL.rstrip('/')}/{ip}"
     params = {"fields": "status,message,country,regionName,city,isp,org,as,query"}
@@ -63,6 +68,7 @@ def geolocate(ip: str) -> Dict[str, Any]:
         "source": "ip-api.com",
     }
     _cache[ip] = result
+    cache_service.set_json(f"ip:intelligence:{ip}", result, config.REDIS_IP_TTL)
     return result
 
 

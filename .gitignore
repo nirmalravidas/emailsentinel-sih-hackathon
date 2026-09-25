@@ -1,5 +1,38 @@
-__pycache__/
-*.pyc
+# Local environment and secrets
 .env
+.env.*
+!.env.example
+*.secret
+*.secrets
+secrets/
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+
+# Python environments and generated files
 .venv/
-data/emailsentinel.db
+.venv-*/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local databases, logs, and generated reports
+data/*.db
+*.sqlite
+*.sqlite3
+*.log
+reports/
+
+# OS and editor files
+.DS_Store
+.idea/
+.vscode/
+!.vscode/settings.example.json

@@ -1,19 +1,26 @@
 """API routes. The analysis pipeline is orchestrated in analyze_email()."""
 import logging
+import base64
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import JSONResponse, Response
 
 from app import config
 from app.database import database
-from app.models.schemas import AnalysisResponse, CasesResponse, NLPRequest, NLPResponse
+from app.models.schemas import AnalysisResponse, AnalysisStatusResponse, CaseStatusUpdate, CasesResponse, NLPRequest, NLPResponse
+from app.services import analysis_service
+from app.services import alert_service
+from app.services import report_service
+from app.workers.tasks import analyze_email_task
 from app.services import (
     dns_service,
     domain_analyzer,
     email_parser,
+    evidence_service,
     header_analyzer,
     ip_intelligence,
     nlp_service,
@@ -32,7 +39,7 @@ def _add_role(store: Dict[str, List[str]], domain: Optional[str], role: str) -> 
 
 @router.post(
     "/analyze-email",
-    response_model=AnalysisResponse,
+    response_model=None,
     tags=["Analysis"],
     summary="Analyze a raw email (.eml upload or pasted raw text)",
 )
@@ -46,7 +53,12 @@ def analyze_email(
     URLs are never opened; only DNS and IP-geolocation lookups leave the server.
     """
     raw: Optional[bytes] = None
+    original_filename: Optional[str] = None
     if file is not None and file.filename:
+        try:
+            original_filename = evidence_service.safe_filename(file.filename)
+        except evidence_service.InvalidEvidenceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         raw = file.file.read(config.MAX_EMAIL_BYTES + 1)
     elif raw_email and raw_email.strip():
         raw = raw_email.encode("utf-8", errors="replace")
@@ -55,6 +67,29 @@ def analyze_email(
         raise HTTPException(status_code=400, detail="Provide an .eml file or raw_email text.")
     if len(raw) > config.MAX_EMAIL_BYTES:
         raise HTTPException(status_code=413, detail=f"Email larger than {config.MAX_EMAIL_BYTES} bytes.")
+    evidence_hash = evidence_service.sha256_digest(raw)
+
+    analysis_id = str(uuid.uuid4())
+    if config.ASYNC_ANALYSIS_ENABLED:
+        database.save_case({
+            "analysis_id": analysis_id,
+            "status": "QUEUED",
+            "subject": None,
+            "sender": None,
+            "raw_email_hash": evidence_hash,
+            "original_filename": original_filename,
+            "raw_email_size": len(raw),
+        })
+        task = analyze_email_task.delay(analysis_id, base64.b64encode(raw).decode("ascii"), evidence_hash)
+        return JSONResponse(
+            status_code=status.HTTP_202_ACCEPTED,
+            content={
+                "case_id": analysis_id,
+                "analysis_id": analysis_id,
+                "task_id": task.id,
+                "status": "QUEUED",
+            },
+        )
 
     # 1. parse -------------------------------------------------------------
     parsed = email_parser.parse_email(raw)
@@ -121,9 +156,14 @@ def analyze_email(
         "attachment_sha256": [a["sha256"] for a in parsed["attachments"]],
     }
 
-    analysis_id = str(uuid.uuid4())
     response = {
         "analysis_id": analysis_id,
+        "evidence": {
+            "sha256": evidence_hash,
+            "size_bytes": len(raw),
+            "original_filename": original_filename,
+            "raw_content_stored": False,
+        },
         "email_summary": {
             "subject": parsed["subject"],
             "from": parsed["from"],
@@ -179,6 +219,7 @@ def analyze_email(
     database.save_case(
         {
             "analysis_id": analysis_id,
+            "status": "COMPLETED",
             "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "subject": parsed["subject"],
             "sender": parsed["from"],
@@ -186,9 +227,114 @@ def analyze_email(
             "risk_score": risk["risk_score"],
             "risk_level": risk["risk_level"],
             "probable_origin_ip": relay["probable_origin_ip"],
+            "raw_email_hash": evidence_hash,
+            "original_filename": original_filename,
+            "raw_email_size": len(raw),
+            "forensic_report": response,
+            "indicators_of_compromise": iocs,
         }
     )
+    alert_service.maybe_create_risk_alert(analysis_id, risk["risk_level"], risk["risk_score"])
     return response
+
+
+@router.get(
+    "/analysis/{analysis_id}",
+    response_model=AnalysisStatusResponse,
+    tags=["Analysis"],
+    summary="Get queued analysis status and completed result metadata",
+)
+def analysis_status(analysis_id: str):
+    case = database.get_case(analysis_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    return {
+        "analysis_id": analysis_id,
+        "case_id": analysis_id,
+        "status": case["status"],
+        "result": case.get("forensic_report") if case["status"] == "COMPLETED" else None,
+    }
+
+
+@router.get("/cases/{case_id}", tags=["Cases"], summary="Get one analysis case")
+def get_case(case_id: str):
+    case = database.get_case(case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return case
+
+
+@router.get("/cases/{case_id}/timeline", tags=["Cases"], summary="Get case forensic timeline")
+def get_case_timeline(case_id: str):
+    timeline = database.case_timeline(case_id)
+    if timeline is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return {"case_id": case_id, "events": timeline}
+
+
+@router.get("/cases/{case_id}/iocs", tags=["Cases"], summary="Get indicators associated with a case")
+def get_case_iocs(case_id: str):
+    indicators = database.get_case_iocs(case_id)
+    if indicators is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return {"case_id": case_id, "iocs": indicators, "source": "database"}
+
+
+@router.get("/cases/{case_id}/correlation", tags=["Cases"], summary="Correlate shared indicators with other cases")
+def get_case_correlation(case_id: str):
+    correlation = database.correlate_case_iocs(case_id)
+    if correlation is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return correlation
+
+
+@router.get("/cases/{case_id}/report", tags=["Cases"], summary="Get the complete forensic report")
+def get_case_report(case_id: str):
+    case = database.get_case(case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    if not case.get("forensic_report"):
+        raise HTTPException(status_code=409, detail="Forensic report is not available yet")
+    database.record_audit_event("REPORT_EXPORTED", "analysis_case", case_id)
+    return case["forensic_report"]
+
+
+@router.get("/cases/{case_id}/report.pdf", tags=["Cases"], summary="Download the forensic report as PDF")
+def download_case_report_pdf(case_id: str):
+    case = database.get_case(case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    report = case.get("forensic_report")
+    if not report:
+        raise HTTPException(status_code=409, detail="Forensic report is not available yet")
+    database.record_audit_event("REPORT_PDF_EXPORTED", "analysis_case", case_id)
+    filename = f"emailsentinel-report-{case_id}.pdf"
+    return Response(
+        content=report_service.build_pdf(report),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.patch("/cases/{case_id}/status", tags=["Cases"], summary="Update case workflow status")
+def update_case_status(case_id: str, update: CaseStatusUpdate):
+    case = database.update_case_status(case_id, update.status, update.analyst_notes)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return case
+
+
+@router.get("/alerts", tags=["Alerts"], summary="List recorded risk alerts")
+def list_alerts(limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)):
+    return {"limit": limit, "offset": offset, "alerts": database.list_alerts(limit, offset)}
+
+
+@router.get("/alerts/{alert_id}", tags=["Alerts"], summary="Get one recorded alert")
+def get_alert(alert_id: int):
+    alert = database.get_alert(alert_id)
+    if alert is None:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return alert
 
 
 @router.post("/nlp/analyze", response_model=NLPResponse, tags=["NLP"], summary="Classify a piece of text")
