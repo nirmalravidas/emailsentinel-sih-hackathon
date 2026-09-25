@@ -45,8 +45,50 @@ function renderReport(report, caseData = {}) {
   </article>`;
     document.querySelectorAll('.tab').forEach((button) => button.addEventListener('click', () => showTab(button.dataset.tab)));
     $('#downloadPdf').addEventListener('click', () => downloadPdf(report.analysis_id));
+    $('#tab-network').insertAdjacentHTML('afterbegin', '<section class="result-card full visual-card"><h3>INFRASTRUCTURE TRACE MAP</h3><p class="muted">Approximate public-IP infrastructure locations from the message relay chain. Select a marker for details.</p><div id="infrastructureMap" class="infrastructure-map"></div></section><section class="result-card full visual-card"><h3>RELAY PATH GRAPH</h3><p class="muted">Oldest observed source hop to newest receiving relay. Dashed edges show the transition between header hops.</p><div id="relayGraph" class="relay-graph"></div></section>');
+    initializeNetworkVisuals(report);
   loadCaseExtras(report.analysis_id);
 }
+
+  function initializeNetworkVisuals(report) {
+    const geolocation = report.geolocation || {};
+    const origin = geolocation.probable_origin_ip || {};
+    const relay = report.relay_analysis || {};
+    const locations = [origin, ...(geolocation.other_public_ips || [])]
+      .filter((location) => Number.isFinite(Number(location.latitude)) && Number.isFinite(Number(location.longitude)));
+    const mapElement = $('#infrastructureMap');
+    if (mapElement && window.L) {
+      const map = L.map(mapElement, { scrollWheelZoom: false });
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+      const bounds = [];
+      locations.forEach((location) => {
+        const point = [Number(location.latitude), Number(location.longitude)];
+        bounds.push(point);
+        L.marker(point).addTo(map).bindPopup(`<strong>${esc(location.ip || 'Public IP')}</strong><br>${esc([location.city, location.region, location.country].filter(Boolean).join(', ') || 'Location unavailable')}<br>${esc(location.organization || location.isp || 'Infrastructure')}`);
+      });
+      if (bounds.length) map.fitBounds(bounds, { padding: [24, 24], maxZoom: 5 });
+      else map.setView([20, 0], 2);
+    } else if (mapElement) {
+      mapElement.innerHTML = '<p class="muted map-fallback">Map library unavailable. Coordinates remain available in the complete payload.</p>';
+    }
+
+    const graphElement = $('#relayGraph');
+    if (graphElement && window.vis && relay.relay_chain?.length) {
+      const nodes = [];
+      const edges = [];
+      relay.relay_chain.forEach((hop, index) => {
+        const from = hop.from_host || hop.from_ip || `hop-${index + 1}`;
+        const to = hop.by_host || `relay-${index + 1}`;
+        nodes.push({ id: `from-${index}`, label: `${from}${hop.from_ip ? `\n${hop.from_ip}` : ''}`, title: 'Received-header source hop', group: index === 0 ? 'origin' : 'relay' });
+        nodes.push({ id: `by-${index}`, label: to, title: 'Receiving relay', group: 'relay' });
+        edges.push({ from: `from-${index}`, to: `by-${index}`, arrows: 'to', label: hop.protocol || 'SMTP' });
+        if (index < relay.relay_chain.length - 1) edges.push({ from: `by-${index}`, to: `from-${index + 1}`, arrows: 'to', dashes: true });
+      });
+      new vis.Network(graphElement, { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) }, { autoResize: true, physics: { stabilization: true }, interaction: { hover: true }, nodes: { shape: 'dot', size: 18, font: { face: 'ui-monospace', size: 11, color: '#17211f' }, borderWidth: 2 }, groups: { origin: { color: { background: '#e67842', border: '#b44d43' } }, relay: { color: { background: '#c9e8d2', border: '#5f876b' } } }, edges: { color: '#819088', font: { face: 'ui-monospace', size: 9 } } });
+    } else if (graphElement) {
+      graphElement.innerHTML = '<p class="muted graph-fallback">No relay hops were available to graph.</p>';
+    }
+  }
 
   function downloadPdf(caseId) {
     const link = document.createElement('a');

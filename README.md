@@ -34,6 +34,7 @@ a qualified analyst.
 - High-risk database alerts
 - PDF forensic report export
 - Browser dashboard served directly by FastAPI
+- Interactive Leaflet infrastructure map and relay-path graph in the Network report tab
 - Configurable sensitive-field masking and retention cleanup
 
 ## Architecture
@@ -478,8 +479,8 @@ The expected core checks are:
 - Tor, DNSBL, AbuseIPDB, URLhaus, and ThreatFox data can be stale or rate-limited.
 - Attachments are hashed and classified by metadata; there is no malware sandbox, YARA engine, or antivirus
   scanning in the MVP.
-- There is no interactive map or graph visualization yet; relay, location, and correlation data are shown
-  as structured report data.
+- The map depends on public geolocation coordinates and external OpenStreetMap tiles; unavailable network
+  lookups fall back to structured report data.
 - Alert delivery is recorded in the database; external notification integrations are future work.
 - Authentication, RBAC, tenant isolation, encryption at rest, legal holds, and full compliance workflows
   are not included.

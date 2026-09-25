@@ -43,7 +43,7 @@ def geolocate(ip: str) -> Dict[str, Any]:
         return cached
 
     url = f"{config.GEO_API_URL.rstrip('/')}/{ip}"
-    params = {"fields": "status,message,country,regionName,city,isp,org,as,query"}
+    params = {"fields": "status,message,country,regionName,city,lat,lon,isp,org,as,query"}
     try:
         resp = httpx.get(url, params=params, timeout=config.HTTP_TIMEOUT)
         resp.raise_for_status()
@@ -62,6 +62,8 @@ def geolocate(ip: str) -> Dict[str, Any]:
         "country": data.get("country"),
         "region": data.get("regionName"),
         "city": data.get("city"),
+        "latitude": data.get("lat"),
+        "longitude": data.get("lon"),
         "isp": data.get("isp"),
         "organization": data.get("org"),
         "asn": data.get("as"),
