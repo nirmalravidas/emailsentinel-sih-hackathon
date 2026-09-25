@@ -45,6 +45,8 @@ services:
       ENABLE_GEOLOCATION: ${ENABLE_GEOLOCATION:-true}
       ENABLE_DNS: ${ENABLE_DNS:-true}
       ENABLE_WHOIS: ${ENABLE_WHOIS:-false}
+      THREAT_INTEL_ENABLED: ${THREAT_INTEL_ENABLED:-false}
+      ABUSEIPDB_API_KEY: ${ABUSEIPDB_API_KEY:-}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
@@ -69,6 +71,8 @@ services:
       ENABLE_GEOLOCATION: ${ENABLE_GEOLOCATION:-true}
       ENABLE_DNS: ${ENABLE_DNS:-true}
       ENABLE_WHOIS: ${ENABLE_WHOIS:-false}
+      THREAT_INTEL_ENABLED: ${THREAT_INTEL_ENABLED:-false}
+      ABUSEIPDB_API_KEY: ${ABUSEIPDB_API_KEY:-}
     command: ["celery", "-A", "app.workers.celery_app.celery_app", "worker", "--loglevel=INFO"]
     depends_on:
       migrate:

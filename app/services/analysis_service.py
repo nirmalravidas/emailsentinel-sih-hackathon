@@ -14,6 +14,7 @@ from app.services import (
     ip_intelligence,
     nlp_service,
     risk_engine,
+    threat_intel_service,
     url_analyzer,
 )
 
@@ -23,7 +24,13 @@ def _add_role(store: Dict[str, List[str]], domain: Optional[str], role: str) -> 
         store.setdefault(domain.lower(), []).append(role)
 
 
-def analyze_raw_email(raw: bytes, *, evidence_hash: Optional[str] = None, analysis_id: Optional[str] = None) -> Dict[str, Any]:
+def analyze_raw_email(
+    raw: bytes,
+    *,
+    evidence_hash: Optional[str] = None,
+    analysis_id: Optional[str] = None,
+    original_filename: Optional[str] = None,
+) -> Dict[str, Any]:
     """Run all existing analysis stages and return the forensic response.
 
     Network lookups are bounded by their service timeouts and URLs are never fetched.
@@ -40,7 +47,7 @@ def analyze_raw_email(raw: bytes, *, evidence_hash: Optional[str] = None, analys
     nlp = nlp_service.analyze_text(f"{parsed['subject'] or ''}\n{parsed['body_text']}")
     identity = header_analyzer.analyze_identity(parsed)
     relay = header_analyzer.analyze_received(parsed)
-    auth = header_analyzer.analyze_authentication(parsed)
+    auth = header_analyzer.analyze_authentication(raw=raw, parsed=parsed, origin_ip=relay["probable_origin_ip"])
     urls = url_analyzer.analyze_urls(parsed["urls"])
 
     sender_domains: Dict[str, List[str]] = {}
@@ -75,10 +82,18 @@ def analyze_raw_email(raw: bytes, *, evidence_hash: Optional[str] = None, analys
     for domain in list(sender_domains) + [url["domain"] for url in urls if url["domain"] and not url["ip_based"]]:
         if domain not in domains:
             domains.append(domain)
+    ioc_urls = [url["url"] for url in urls]
+    attachment_hashes = [attachment["sha256"] for attachment in parsed["attachments"]]
+    threat_intelligence = threat_intel_service.lookup_indicators(ips, domains, ioc_urls)
 
     return {
         "analysis_id": analysis_id or str(uuid.uuid4()),
-        "evidence": {"sha256": evidence_hash, "size_bytes": len(raw), "raw_content_stored": False},
+        "evidence": {
+            "sha256": evidence_hash,
+            "size_bytes": len(raw),
+            "original_filename": original_filename,
+            "raw_content_stored": False,
+        },
         "email_summary": {
             "subject": parsed["subject"], "from": parsed["from"], "to": parsed["to"],
             "reply_to": parsed["reply_to"], "return_path": parsed["return_path"],
@@ -112,9 +127,10 @@ def analyze_raw_email(raw: bytes, *, evidence_hash: Optional[str] = None, analys
         },
         "geolocation": geolocation,
         "domain_intelligence": domain_intel,
+        "threat_intelligence": threat_intelligence,
         "indicators_of_compromise": {
-            "ips": ips, "domains": domains, "urls": [url["url"] for url in urls],
-            "attachment_sha256": [attachment["sha256"] for attachment in parsed["attachments"]],
+            "ips": ips, "domains": domains, "urls": ioc_urls,
+            "attachment_sha256": attachment_hashes,
         },
         "explanation": risk["explanation"], "warnings": warnings,
     }

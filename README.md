@@ -1,387 +1,496 @@
 # EmailSentinel
 
-**AI-Powered Email Threat Detection, GeoLocation & Forensic Intelligence Platform**
+EmailSentinel is an AI-assisted email threat detection and forensic intelligence platform. It accepts raw
+`.eml` evidence, analyzes content and technical headers, reconstructs the visible relay path, identifies
+indicators of compromise, estimates infrastructure geolocation, correlates optional external threat
+intelligence, and presents the result through a FastAPI API and browser dashboard.
 
-> **Prototype for demonstration and research.** Not a production security product. IP geolocation shows
-> where network *infrastructure* is located, not the attacker's physical location or identity, and the risk
-> score is a heuristic, not a scientifically validated probability.
+> **MVP status:** suitable for demonstration, academic work, and controlled internal evaluation. It is not
+a production security product. Risk scores and attribution signals are heuristic and must be reviewed by
+a qualified analyst.
 
----
+## What It Provides
 
-## 1. What EmailSentinel does
+- `.eml` upload or pasted raw email analysis
+- TF-IDF and Logistic Regression classification for legitimate, phishing, and fraud-like messages
+- Rule-based detection for urgency, credential theft, payment requests, account suspension, impersonation,
+  and suspicious calls to action
+- Sender identity comparison across Display Name, From, Reply-To, and Return-Path
+- Lookalike and typosquatted-domain detection
+- URL parsing without opening or fetching URLs
+- Detection of HTTP links, suspicious keywords, IP-based links, shorteners, risky TLDs, redirects, and
+  common URL obfuscation
+- Attachment metadata and SHA-256 hashes
+- Received-header parsing and oldest-first relay reconstruction
+- Probable origin IP selection from public Received-header addresses or `X-Originating-IP`
+- IP infrastructure geolocation: country, region, city, ISP, organization, and ASN
+- Receiver-reported SPF, DKIM, and DMARC results
+- Independent SPF DNS evaluation, DKIM cryptographic verification, and DMARC policy/alignment checks
+- Explainable 0-100 risk score with reason and score breakdown
+- Optional AbuseIPDB, URLhaus, ThreatFox, Tor exit-list, and DNSBL correlation
+- PostgreSQL-ready persistence with SQLite fallback for local development
+- Redis caching and optional Celery asynchronous analysis
+- Case history, workflow status, analyst notes, timelines, IOCs, correlations, and campaigns
+- High-risk database alerts
+- PDF forensic report export
+- Browser dashboard served directly by FastAPI
+- Configurable sensitive-field masking and retention cleanup
 
-Send it a raw email (an `.eml` file or pasted text) and one API call returns a structured forensic report:
+## Architecture
 
-- NLP classification of the message (legitimate / phishing / fraud) with the words that drove the decision
-- Sender identity checks (Display Name vs From vs Reply-To vs Return-Path)
-- URL indicators (URLs are only parsed, **never opened**)
-- Received-header relay chain and a labelled `probable_origin_ip`
-- IP geolocation, DNS records, SPF / DKIM / DMARC results read from headers
-- Lookalike (typosquatted) domain detection against a small brand list
-- An explainable 0-100 risk score with the reason for every point
-- Indicators of compromise (IPs, domains, URLs, attachment hashes) and a stored case history
+EmailSentinel is a modular monolith with an optional asynchronous worker:
 
-## 2. Architecture
-
-Single FastAPI service, no frontend, no auth.
-
+```text
+Browser dashboard / API client
+              |
+              v
+        FastAPI application
+              |
+              v
+     Shared forensic pipeline
+              |
+   +----------+-----------+------------------+
+   |          |           |                  |
+ Parser     NLP       Header/auth        URL/domain
+   |          |           |                  |
+   +----------+-----------+------------------+
+              |
+   +----------+-----------+------------------+
+   |          |           |                  |
+ Geolocation DNS     Threat intelligence  Risk engine
+              |
+              v
+     JSON report and persisted case
+              |
+   PostgreSQL / SQLite, Redis, Celery
 ```
-POST /api/v1/analyze-email  (.eml upload OR raw text)
-        |
-   email_parser        -> headers, body, URLs, attachments, MIME
-        |
-   nlp_service         -> TF-IDF + Logistic Regression  (+ separate rule-based heuristics)
-   header_analyzer     -> identity mismatch, Received chain, SPF/DKIM/DMARC
-   url_analyzer        -> per-URL risk indicators
-   domain_analyzer     -> lookalike detection (edit distance)
-   ip_intelligence     -> ip-api.com geolocation (public IPs only)
-   dns_service         -> A / MX / TXT via dnspython (+ optional WHOIS)
-        |
-   risk_engine         -> explainable additive score, level, reasons
-        |
-  SQLAlchemy (PostgreSQL in deployment, SQLite for local smoke tests) + one JSON response
-```
 
-```
+### Runtime modes
+
+**Local mode** uses the project virtual environment and SQLite. Redis is optional and external lookups fail
+gracefully. This is the fastest mode for development.
+
+**Docker mode** runs PostgreSQL, Redis, an Alembic migration job, the FastAPI API, and a Celery worker.
+This is the preferred mode for testing the complete service topology.
+
+## Repository Layout
+
+```text
 emailsentinel/
 ├── app/
-│   ├── main.py                 FastAPI app, /health, model + DB startup
-│   ├── config.py               settings / env vars
-│   ├── api/routes.py           endpoints + pipeline orchestration
-│   ├── services/               one module per analysis stage (see diagram)
-│   ├── models/schemas.py       Pydantic models (drive Swagger docs)
-│   ├── database/base.py        SQLAlchemy declarative metadata
-│   ├── database/models/         PostgreSQL-ready case and intelligence entities
-│   └── database/database.py    SQLAlchemy session/repository compatibility layer
-├── data/email_dataset.csv      demo training set (text,label)
-├── models/email_nlp_model.joblib   trained model (auto-trained if missing)
-├── samples/                    phishing_email.eml, legitimate_email.eml
-├── requirements.txt  README.md  .env.example
+│   ├── main.py                         FastAPI bootstrap and frontend serving
+│   ├── config.py                       Environment-backed configuration
+│   ├── api/routes.py                    Analysis, cases, campaigns, alerts, reports
+│   ├── models/schemas.py                Pydantic request and response schemas
+│   ├── database/database.py             SQLAlchemy repository functions
+│   ├── database/models/entities.py      PostgreSQL-ready ORM entities
+│   ├── services/
+│   │   ├── analysis_service.py          Shared synchronous/Celery pipeline
+│   │   ├── email_parser.py              MIME, headers, body, URLs, attachments
+│   │   ├── nlp_service.py               ML classifier and heuristics
+│   │   ├── header_analyzer.py            Identity, relay, SPF/DKIM/DMARC
+│   │   ├── threat_intel_service.py       External reputation and infrastructure checks
+│   │   ├── ip_intelligence.py             Infrastructure geolocation
+│   │   ├── dns_service.py                A, MX, TXT, and optional WHOIS
+│   │   ├── risk_engine.py                 Explainable risk scoring
+│   │   ├── privacy_service.py             Optional sensitive-field masking
+│   │   └── report_service.py              PDF report generation
+│   └── workers/                          Celery application and tasks
+├── frontend/                             Dashboard HTML, CSS, and JavaScript
+├── alembic/                              Database migrations
+├── data/email_dataset.csv                Demonstration training data
+├── models/email_nlp_model.joblib         Saved demonstration model
+├── samples/                              Example `.eml` evidence
+├── Dockerfile
+├── docker-compose.yml
+├── requirements.txt
+├── .env.example                          Public key-only configuration template
+└── README.md
 ```
 
-## 3. How NLP is used
+## Requirements
 
-`app/services/nlp_service.py` has two independent parts:
+For local development:
 
-1. **ML classifier.** `subject + body` is cleaned (lowercase, URLs/emails replaced by placeholder tokens,
-   punctuation and numbers removed), vectorised with `TfidfVectorizer` (1-2 grams, stop words removed) and
-   classified by `LogisticRegression` into `legitimate`, `phishing` or `fraud`. The output is the class,
-   its probability (`confidence`), all class probabilities, and `keywords` - the words in *this* email that
-   pushed the model most strongly toward the predicted class.
-2. **Heuristics.** Regex rules flag urgency, financial request, credential request, account-suspension
-   threat, impersonation language and suspicious call-to-action, and report the matched phrases as evidence.
+- Python 3.11 or newer
+- Optional Node.js for `node --check frontend/app.js`
+- Network access if DNS, geolocation, SPF, DMARC, DKIM, or threat-intelligence checks are enabled
 
-The model output and the heuristic output are kept in separate fields.
+For Docker:
 
-The training set (`data/email_dataset.csv`, ~100 short hand-written examples) is only for demonstration.
-5-fold cross-validation on it gave about 0.90 accuracy, but that number mostly shows the demo data is easy;
-do not treat it as real-world performance. To retrain after editing the CSV:
+- Docker Engine or Docker Desktop
+- Docker Compose v2
+- Permission to access the Docker daemon socket on Linux
+
+## Local Installation
+
+```bash
+cd /home/nirmalravidas/codeplay/projects/emailsentinel
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+The repository includes a demonstration model. If it is missing or needs retraining:
 
 ```bash
 python -m app.services.nlp_service
 ```
 
-## 4. How email headers are analyzed
-
-- **Identity:** display name, From, Reply-To and Return-Path are compared by registrable domain. Flags:
-  Reply-To differs from sender, Return-Path differs (noted as often normal for bulk mail), display name
-  naming a known brand while the domain is not that brand's, or an email address in the display name that
-  belongs to another domain.
-- **Received chain:** every `Received:` header is parsed (from-host, IP, by-host, protocol, timestamp). Headers
-  are added newest-first, so the chain is reversed and returned **oldest first**.
-  `probable_origin_ip` is the earliest *public* IP in the chain (falls back to the earliest IP, then
-  `X-Originating-IP`). Received headers can be forged, so this is a lead, not proof.
-- **Authentication:** SPF, DKIM and DMARC results are read from `Authentication-Results` (and `Received-SPF`
-  for SPF). If absent they are `"unknown"`. **No cryptographic DKIM verification is performed.**
-- **Lookalike domains:** Levenshtein similarity after undoing character substitutions (`0->o`, `1->l/i`,
-  `rn->m`, `vv->w`), plus checks for the brand embedded in a longer domain (`micros0ft-security.com`), the
-  same name on another TLD, and `microsoft.com.evil.net`. Compared against `KNOWN_BRANDS` in
-  `domain_analyzer.py`. This is a heuristic indicator, not proof of impersonation.
-
-## 5. How IP geolocation works
-
-Public IPs from the Received chain are looked up on the free `ip-api.com` endpoint (country, region, city,
-ISP, organization, ASN). Private, loopback and reserved addresses are **never** sent to the service and
-return `{"status": "private_ip", "message": "Geolocation unavailable for private IP"}`. If the service is
-unreachable or rate-limited (the free tier allows about 45 requests/minute and is HTTP only), the response
-says `lookup_failed` and the rest of the analysis still works. The result describes network infrastructure
-(often a VPN, hosting provider or compromised server), not the sender's physical location or identity.
-
-## 6. How risk scoring works
-
-`risk_engine.py` adds up fixed, documented points (maximum 100). Nothing is hidden: the response includes
-`reasons` and a `score_breakdown`.
-
-| Group | Max | Details |
-|---|---|---|
-| NLP model | 30 | 30 x (1 - P(legitimate)) |
-| NLP heuristics | 15 | urgency 4, credential 4, financial 3, suspension 2, impersonation 1, CTA 1 |
-| URLs | 15 | HTTP 3, suspicious keywords 6, IP / obfuscation / shortener / risky TLD 6 |
-| Identity | 15 | Reply-To mismatch 7, brand in display name 5, Return-Path mismatch 3 |
-| Authentication | 15 | SPF fail 6 (softfail 3), DKIM fail 4, DMARC fail 5 |
-| Lookalike domain | 10 | any lookalike match |
-
-Levels: 0-29 Low, 30-59 Medium, 60-79 High, 80-100 Critical. DNS data is **not** part of the score. If the
-NLP model says `legitimate` but the rules push the score to High/Critical, the classification becomes
-`suspicious`. The weights are hand-picked for the demo.
-
-## 7. Installation
-
-Python 3.11+.
+The public `.env.example` file intentionally contains keys without values. Create a private `.env` only
+when you need to override defaults:
 
 ```bash
-cd emailsentinel
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python -m app.services.nlp_service   # trains models/email_nlp_model.joblib (also auto-runs on first start)
-cp .env.example .env                 # optional
+cp .env.example .env
 ```
 
-### Database migrations
+The real `.env` is ignored by Git. Never commit passwords, API keys, tokens, private keys, or certificates.
 
-The persistent schema is defined by SQLAlchemy 2.x models and managed in production by Alembic.
-Set `DATABASE_URL` to PostgreSQL in `.env`, for example
-`postgresql+psycopg://emailsentinel:password@localhost:5432/emailsentinel`, then run:
+## Run Locally
 
 ```bash
-alembic upgrade head
+source .venv/bin/activate
+uvicorn app.main:app --reload
 ```
 
-For local prototype smoke tests the default is `sqlite:///data/emailsentinel.db`. The application
-keeps a development-only `create_all` fallback for that SQLite database; it is not the production
-migration strategy. To create a future migration after changing a model:
+Open the dashboard:
+
+```text
+http://127.0.0.1:8000/
+```
+
+Open API documentation:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+Check service health:
 
 ```bash
-alembic revision --autogenerate -m "describe the schema change"
-alembic upgrade head
+curl http://127.0.0.1:8000/health
 ```
 
-The initial schema includes cases, evidence, metadata, header/authentication analysis, URL/domain/IP
-indicators, IOCs, campaigns and relationships, analysis tasks, audit logs, and evidence chain-of-custody
-events. Raw email bodies are not stored in the case tables.
-
-Uploaded `.eml` files are basename-sanitized, size-limited, restricted by extension, and identified with
-SHA-256. The response exposes the evidence hash and the database records an `INGESTED` event; raw email
-content is not persisted by the current ingestion path.
-
-### Redis and Celery
-
-Redis is configured as an optional cache and Celery broker/result backend. Cache failures degrade to
-direct lookups; Redis is never the source of truth. Start a worker with:
+Use the dashboard to upload one of the files in `samples/`, or call the API directly:
 
 ```bash
-celery -A app.workers.celery_app.celery_app worker --loglevel=INFO
+curl -X POST http://127.0.0.1:8000/api/v1/analyze-email \
+  -F "file=@samples/phishing_email.eml"
 ```
 
-Set `ASYNC_ANALYSIS_ENABLED=true` to make `POST /api/v1/analyze-email` return `202 Accepted` with
-`case_id`, `analysis_id`, and `task_id`. Poll `GET /api/v1/analysis/{analysis_id}` until the persisted
-status is `COMPLETED`, then read its `result` forensic report. The default `false` keeps the prototype's
-synchronous response for local compatibility. Celery workers require a reachable Redis instance.
+Raw text can also be submitted:
 
-Case investigation endpoints are available at `GET /api/v1/cases/{case_id}`, `/timeline`, `/iocs`,
-`/correlation`, and `/report`. Use `GET /api/v1/cases/{case_id}/report.pdf` to download a PDF copy
-of the complete forensic report, including risk assessment, IOCs, relay analysis, and infrastructure
-geolocation. IOC values are normalized and persisted in PostgreSQL through the
-`iocs` and `case_iocs` tables. `/correlation` reports shared indicators and a bounded similarity score;
-shared infrastructure supports campaign investigation but does not prove common attacker identity.
-Analysts can update workflow state with `PATCH /api/v1/cases/{case_id}/status`; status changes and
-report retrieval are included in the audit-backed timeline.
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/analyze-email \
+  -F "raw_email=<samples/phishing_email.eml"
+```
 
-High-risk analyses (`HIGH` or `CRITICAL`) create one idempotent database alert. Alerts are available
-through `GET /api/v1/alerts` and `GET /api/v1/alerts/{alert_id}` with `RECORDED` delivery status.
-External email, webhook, Slack, and Teams delivery remain future providers behind the alert service
-abstraction.
+## Run with Docker
 
-### Docker Compose
+On Linux, if Docker reports permission denied for `/var/run/docker.sock`, add your user to the Docker
+group and start a new shell:
 
-Copy `.env.example` to `.env`, replace `POSTGRES_PASSWORD`, then start the complete backend:
+```bash
+sudo usermod -aG docker "$USER"
+newgrp docker
+```
+
+Create a private environment file and set the required database password:
+
+```bash
+cp .env.example .env
+sed -i 's/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=choose-a-local-password/' .env
+```
+
+Start the complete stack:
 
 ```bash
 docker compose up --build
 ```
 
-Compose starts PostgreSQL, Redis, an Alembic migration job, the FastAPI API, and a Celery worker.
-Swagger is available at `http://127.0.0.1:8000/docs`. Stop services with `docker compose down`; add
-`-v` only when intentionally deleting the PostgreSQL and Redis volumes.
+The services are:
 
-## 8. Running the server
+| Service | Purpose |
+|---|---|
+| `postgres` | Persistent PostgreSQL database |
+| `redis` | Celery broker, result backend, and cache |
+| `migrate` | One-shot Alembic migration job |
+| `api` | FastAPI server and dashboard |
+| `worker` | Celery asynchronous analysis worker |
 
-```bash
-uvicorn app.main:app --reload
-```
-
-Swagger UI: <http://127.0.0.1:8000/docs> (OpenAPI JSON at `/openapi.json`).
-
-## 9. Swagger usage (demo flow)
-
-1. Open `/docs`, expand **POST /api/v1/analyze-email**, click **Try it out**.
-2. Under `file`, choose `samples/phishing_email.eml` (or paste the whole raw email into `raw_email`). Execute.
-3. Read the JSON: `threat_assessment`, `nlp_analysis`, `identity_analysis`, `authentication`, `url_analysis`,
-   `relay_analysis`, `geolocation`, `domain_intelligence`, `indicators_of_compromise`.
-4. Run it again with `samples/legitimate_email.eml` to compare (score about 4, Low).
-5. Try **POST /api/v1/nlp/analyze** with `{"text": "Your account will be suspended. Verify immediately."}`
-   and **GET /api/v1/cases** for the stored history.
-
-Same thing from the command line:
+Verify the stack:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/v1/analyze-email -F "file=@samples/phishing_email.eml"
-curl -X POST http://127.0.0.1:8000/api/v1/analyze-email -F "raw_email=<samples/phishing_email.eml"
+docker compose ps
 curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/api/v1/cases
+curl -X POST http://127.0.0.1:8000/api/v1/analyze-email \
+  -F "file=@samples/phishing_email.eml"
 ```
 
-The sample phishing email is fictional. Its origin IP `8.8.8.8` is only a placeholder public address so
-geolocation can be demonstrated; it does not mean Google sent it.
+Stop containers without deleting volumes:
 
-## 10. Example API response
-
-Abridged output for `samples/phishing_email.eml` (real values from a test run; the `geolocation` block is
-shown as returned when `ip-api.com` is reachable):
-
-```json
-{
-  "analysis_id": "8f570e59-c036-4ed4-99be-0e6058081e99",
-  "email_summary": {
-    "subject": "Urgent: Verify Your Account",
-    "from": "Microsoft Support <support@micros0ft-security.com>",
-    "reply_to": "attacker@example.com",
-    "return_path": "<bounce@relay-node7.example.net>"
-  },
-  "threat_assessment": {
-    "classification": "phishing",
-    "risk_score": 87,
-    "risk_level": "Critical",
-    "reasons": [
-      "NLP model detected phishing language (threat probability 0.99)",
-      "Urgent / time-pressure language detected",
-      "Request for credentials or personal verification detected",
-      "Account suspension / lock threat detected",
-      "Impersonation-style wording (e.g. 'Security Team') detected",
-      "Suspicious call-to-action (e.g. 'click here') detected",
-      "..."
-    ]
-  },
-  "nlp_analysis": {
-    "confidence": 0.991,
-    "keywords": [
-      "verify",
-      "account",
-      "click",
-      "password",
-      "immediately",
-      "suspended"
-    ],
-    "social_engineering_indicators": [
-      "urgency",
-      "credential request",
-      "account suspension threat",
-      "impersonation language",
-      "suspicious call-to-action"
-    ]
-  },
-  "identity_analysis": {
-    "identity_mismatch": true,
-    "lookalike_domain": true,
-    "matched_brand": "Microsoft"
-  },
-  "authentication": {
-    "spf": "fail",
-    "dkim": "none",
-    "dmarc": "fail"
-  },
-  "url_analysis": [
-    {
-      "url": "http://example-login-security.com/verify",
-      "domain": "example-login-security.com",
-      "risk_indicators": [
-        "HTTP (no TLS)",
-        "login keyword",
-        "verify keyword",
-        "security keyword"
-      ]
-    }
-  ],
-  "relay_analysis": {
-    "probable_origin_ip": "8.8.8.8",
-    "relay_chain": [
-      "... 4 hops, oldest first ..."
-    ]
-  },
-  "geolocation": {
-    "probable_origin_ip": {
-      "ip": "8.8.8.8",
-      "status": "ok",
-      "country": "United States",
-      "region": "California",
-      "city": "Mountain View",
-      "isp": "Google LLC",
-      "organization": "Google Public DNS",
-      "asn": "AS15169 Google LLC"
-    },
-    "disclaimer": "..."
-  },
-  "domain_intelligence": {
-    "domains": [
-      "... A / MX / TXT per sender + URL domain ..."
-    ]
-  },
-  "indicators_of_compromise": {
-    "ips": [
-      "8.8.8.8"
-    ],
-    "domains": [
-      "micros0ft-security.com",
-      "example.com",
-      "relay-node7.example.net",
-      "example-login-security.com"
-    ],
-    "urls": [
-      "http://example-login-security.com/verify"
-    ],
-    "attachment_sha256": []
-  },
-  "explanation": [
-    "Phishing-like language detected",
-    "Social-engineering language detected",
-    "Suspicious URL detected",
-    "Sender identity mismatch detected",
-    "Email authentication failed",
-    "Suspicious domain detected"
-  ]
-}
+```bash
+docker compose down
 ```
 
-## 11. Postman demo
+Delete database and Redis volumes only when intentionally resetting local data:
 
-Start the service with `uvicorn app.main:app --reload`, then create these requests in Postman:
+```bash
+docker compose down -v
+```
 
-1. `GET http://127.0.0.1:8000/health` - confirm the service is running.
-2. `POST http://127.0.0.1:8000/api/v1/analyze-email` - choose **Body > form-data**, add a key named
-  `file`, change its type from **Text** to **File**, and select any `.eml` file from `samples/`.
-3. `POST http://127.0.0.1:8000/api/v1/nlp/analyze` - choose **Body > raw > JSON** and send
-  `{ "text": "Your account will be suspended. Verify immediately." }`.
-4. `GET http://127.0.0.1:8000/api/v1/cases` - show the stored analysis history.
+Do not run local Uvicorn and Docker API on port `8000` at the same time.
 
-The five additional upload-ready examples are `01_legitimate_project_update.eml`,
-`02_account_verification_phishing.eml`, `03_invoice_payment_fraud.eml`, `04_suspicious_attachment.eml`,
-and `05_html_link_scam.eml`. The API returns one structured JSON report per upload; compare
-`threat_assessment.classification`, `threat_assessment.risk_score`, `url_analysis`, and
-`indicators_of_compromise` during the demo.
+## Configuration
 
-## 12. Limitations
+Configuration is loaded from the private `.env` file and environment variables. Blank values use safe
+application defaults.
 
-- Prototype only: tiny demo dataset (~100 rows), so the classifier will make mistakes on real-world email.
-- Risk weights are hand-set; the score is not a calibrated probability.
-- Headers such as `Received` and `Authentication-Results` can be forged; results are only as trustworthy as the
-  receiving mail server that added them. No cryptographic DKIM verification, no live SPF/DMARC evaluation.
-- Geolocation is infrastructure location from a free third-party service (rate limited, HTTP only, can be
-  wrong). It never identifies an attacker.
-- Lookalike detection uses a six-brand list and simple string similarity; expect false positives and misses.
-- URLs are never fetched or sandboxed, so redirects and page content are not analysed.
-- Handles common `.eml` structures only; heavily malformed or exotic messages may be partially parsed.
-- No authentication, rate limiting or encryption; do not expose it to the internet as is. Only case metadata
-  is stored in SQLite, never full email content.
-- DNS lookups and geolocation send the sender's domains/IPs to your DNS resolver and ip-api.com. Set
-  `ENABLE_DNS=false` / `ENABLE_GEOLOCATION=false` in `.env` for fully offline analysis.
+### Core settings
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DATABASE_URL` | SQLite file | SQLAlchemy database URL |
+| `DATABASE_PATH` | `data/emailsentinel.db` | Local SQLite path |
+| `MAX_EMAIL_BYTES` | 5242880 | Maximum uploaded email size |
+| `ENABLE_DNS` | `true` | Enable DNS lookups |
+| `ENABLE_GEOLOCATION` | `true` | Enable IP geolocation |
+| `ENABLE_WHOIS` | `false` | Enable optional WHOIS lookups |
+| `HTTP_TIMEOUT` | 4 | External HTTP timeout in seconds |
+| `DNS_TIMEOUT` | 2.5 | DNS timeout in seconds |
+
+### Async processing
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ASYNC_ANALYSIS_ENABLED` | `false` | Return queued responses and use Celery |
+| `REDIS_ENABLED` | `true` | Enable Redis cache attempts |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection URL |
+| `CELERY_BROKER_URL` | `REDIS_URL` | Celery broker |
+| `CELERY_RESULT_BACKEND` | `REDIS_URL` | Celery result backend |
+| `CELERY_TIME_LIMIT` | 300 | Hard task limit in seconds |
+
+### Privacy and retention
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MASK_SENSITIVE_FIELDS` | `false` | Mask email addresses in returned and stored reports |
+| `RETENTION_ENABLED` | `false` | Enable expired-case cleanup at startup |
+| `RETENTION_DAYS` | 365 | Case age threshold for cleanup |
+
+### Threat intelligence
+
+Threat intelligence is disabled by default. Enable it only when external provider lookups are acceptable:
+
+```env
+THREAT_INTEL_ENABLED=true
+ABUSEIPDB_API_KEY=your-private-key
+```
+
+Additional settings include `TOR_EXIT_LIST_URL`, `THREAT_INTEL_TIMEOUT`, and `THREAT_INTEL_DNSBL`.
+
+When enabled, the service performs best-effort checks for:
+
+- Tor exit-node membership
+- DNSBL listings associated with abuse or open-relay infrastructure
+- AbuseIPDB IP reputation and hosting/proxy metadata when an API key is configured
+- URLhaus URL and domain reputation
+- ThreatFox botnet and malware IOC matches
+
+Provider failures return `lookup_failed` or `not_configured` and do not fail the email analysis. External
+feeds may be incomplete, stale, rate-limited, or unavailable. A feed match is an investigative indicator,
+not proof of attribution.
+
+## Database and Migrations
+
+Local SQLite automatically creates tables for development. Docker/PostgreSQL uses Alembic:
+
+```bash
+alembic upgrade head
+```
+
+After changing ORM models:
+
+```bash
+alembic revision --autogenerate -m "describe the change"
+alembic upgrade head
+```
+
+The schema includes cases, evidence hashes, email metadata, header analysis, authentication results, URLs,
+domains, IP indicators, normalized IOCs, campaigns, tasks, alerts, audit logs, and evidence events.
+
+Raw email content is not stored by the current ingestion path. Evidence identity is preserved through a
+SHA-256 hash, file size, sanitized filename, and chain-of-custody event.
+
+## API Reference
+
+All application endpoints are under `/api/v1`.
+
+### Analysis
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/analyze-email` | Analyze `.eml` upload or `raw_email` form text |
+| `GET` | `/analysis/{analysis_id}` | Read queued, processing, failed, or completed status |
+| `POST` | `/nlp/analyze` | Test NLP and heuristic analysis on plain text |
+
+With `ASYNC_ANALYSIS_ENABLED=true`, upload returns `202` and includes `analysis_id`, `case_id`, and
+`task_id`. Poll the analysis endpoint until its status is `COMPLETED`.
+
+### Cases and reports
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/cases` | List stored case summaries |
+| `GET` | `/cases/{case_id}` | Read case metadata and persisted report |
+| `GET` | `/cases/{case_id}/timeline` | Read forensic and audit timeline |
+| `GET` | `/cases/{case_id}/iocs` | Read normalized case IOCs |
+| `GET` | `/cases/{case_id}/correlation` | Find shared IOCs across cases |
+| `GET` | `/cases/{case_id}/report` | Download complete report as JSON |
+| `GET` | `/cases/{case_id}/report.pdf` | Download complete report as PDF |
+| `PATCH` | `/cases/{case_id}/status` | Update workflow status and analyst notes |
+
+Allowed case statuses are `NEW`, `ANALYZING`, `REVIEW`, `CONFIRMED_THREAT`, `FALSE_POSITIVE`, and `CLOSED`.
+
+### Campaigns
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/campaigns` | Create an investigation campaign |
+| `GET` | `/campaigns` | List campaigns |
+| `GET` | `/campaigns/{campaign_id}` | Read campaign cases and indicators |
+| `POST` | `/campaigns/{campaign_id}/cases/{case_id}` | Attach a case with optional similarity score |
+
+Campaign correlation is based on shared infrastructure and IOCs. It does not prove common attacker
+identity.
+
+### Alerts
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/alerts` | List recorded high-risk alerts |
+| `GET` | `/alerts/{alert_id}` | Read one alert |
+
+High and critical analyses create one idempotent database alert with `RECORDED` delivery status. External
+email, webhook, Slack, Teams, and SIEM delivery are not included in the MVP.
+
+## Report Structure
+
+An analysis report includes:
+
+```text
+analysis_id
+evidence
+email_summary
+threat_assessment
+nlp_analysis
+identity_analysis
+authentication
+url_analysis
+relay_analysis
+geolocation
+domain_intelligence
+threat_intelligence
+indicators_of_compromise
+explanation
+warnings
+```
+
+The `authentication` object contains both receiver-reported fields (`spf`, `dkim`, `dmarc`) and
+`independent_validation` with SPF, DKIM, DMARC status, DNS evidence, cryptographic verification state,
+and alignment information.
+
+The `geolocation` object describes public network infrastructure such as a mail server, hosting provider,
+VPN, or relay. It does not identify an attacker's physical location.
+
+## Risk Scoring
+
+The risk engine is explainable and capped at 100:
+
+| Signal group | Maximum |
+|---|---:|
+| NLP threat probability | 30 |
+| Social-engineering heuristics | 15 |
+| URL indicators | 15 |
+| Sender identity mismatch | 15 |
+| SPF/DKIM/DMARC failures | 15 |
+| Lookalike domain | 10 |
+
+Risk levels:
+
+- `0-29`: Low
+- `30-59`: Medium
+- `60-79`: High
+- `80-100`: Critical
+
+The score is a hand-weighted triage signal, not a probability or legal conclusion.
+
+## Testing and Validation
+
+Run the automated tests:
+
+```bash
+source .venv/bin/activate
+python -m pytest -q tests
+```
+
+Run syntax and compile checks:
+
+```bash
+python -m compileall -q app
+node --check frontend/app.js
+git diff --check
+```
+
+The expected core checks are:
+
+- `/health` returns `200`
+- `/` serves the dashboard
+- A sample `.eml` returns `200` in synchronous mode
+- Authentication includes independent SPF/DKIM/DMARC results
+- A case is persisted
+- PDF export begins with valid `%PDF` bytes
+- Campaign creation and case assignment return `200`
+
+## Security and Privacy Notes
+
+- `.env`, credentials, private keys, certificates, local databases, logs, and reports are ignored by Git.
+- `.env.example` is a key-only public template; it contains no real values.
+- Never commit `ABUSEIPDB_API_KEY`, database passwords, Redis credentials, or tokens.
+- Uploaded filenames are reduced to a basename and restricted to `.eml`.
+- Upload size is bounded by `MAX_EMAIL_BYTES`.
+- URLs are not opened or fetched by the parser.
+- Private and reserved IPs are not sent to the geolocation provider.
+- Sensitive-field masking is opt-in through `MASK_SENSITIVE_FIELDS=true`.
+- Retention cleanup is opt-in through `RETENTION_ENABLED=true`.
+- The MVP has no authentication or role-based access control. Do not expose it directly to the public
+  internet without adding access control, rate limiting, TLS, and operational logging.
+
+## Known Limitations
+
+- The demonstration dataset is small and is not representative of production email traffic.
+- The model is not calibrated, multilingual, or continuously monitored for drift.
+- Received headers and receiver-reported authentication headers can be forged.
+- Independent authentication checks depend on DNS, DKIM signing keys, network access, and message integrity.
+- Geolocation is approximate infrastructure location, not attacker identity or physical location.
+- VPN detection is provider-dependent; the MVP uses hosting/proxy metadata where available rather than a
+  dedicated commercial VPN database.
+- Tor, DNSBL, AbuseIPDB, URLhaus, and ThreatFox data can be stale or rate-limited.
+- Attachments are hashed and classified by metadata; there is no malware sandbox, YARA engine, or antivirus
+  scanning in the MVP.
+- There is no interactive map or graph visualization yet; relay, location, and correlation data are shown
+  as structured report data.
+- Alert delivery is recorded in the database; external notification integrations are future work.
+- Authentication, RBAC, tenant isolation, encryption at rest, legal holds, and full compliance workflows
+  are not included.
+
+## Responsible Use
+
+Use EmailSentinel only on email evidence that you are authorized to inspect. Treat third-party reputation,
+geolocation, authentication, and attribution results as investigative leads. Preserve original evidence and
+follow your organization's privacy, retention, legal, and incident-response procedures.
+
+## License
+
+No license has been selected for this repository yet. Add an appropriate `LICENSE` file before publishing
+the project for external reuse.

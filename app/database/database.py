@@ -2,12 +2,14 @@
 from contextlib import contextmanager
 from typing import Any, Dict, List
 
-from sqlalchemy import create_engine, func, select
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app import config
 from app.database.base import Base
-from app.database.models import Alert, AnalysisCase, AuditLog, CaseIOC, EmailEvidence, EvidenceEvent, IOC
+from app.database.models import Alert, AnalysisCase, AuditLog, Campaign, CampaignIndicator, CaseIOC, EmailEvidence, EvidenceEvent, IOC
 
 
 connect_args = {"check_same_thread": False} if config.DATABASE_URL.startswith("sqlite") else {}
@@ -38,6 +40,18 @@ def init_db() -> None:
     if config.DATABASE_URL.startswith("sqlite"):
         config.DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
         Base.metadata.create_all(engine)
+
+
+def purge_expired_cases() -> int:
+    if not config.RETENTION_ENABLED:
+        return 0
+    cutoff = datetime.now(timezone.utc) - timedelta(days=config.RETENTION_DAYS)
+    with session_scope() as session:
+        expired = session.scalars(select(AnalysisCase).where(AnalysisCase.created_at < cutoff)).all()
+        count = len(expired)
+        for case in expired:
+            session.delete(case)
+        return count
 
 
 def save_case(record: Dict[str, Any]) -> None:
@@ -227,6 +241,80 @@ def get_alert(alert_id: int) -> Dict[str, Any] | None:
         return _alert_dict(alert) if alert else None
 
 
+def create_campaign(name: str, description: str | None = None, risk_level: str | None = None) -> Dict[str, Any]:
+    import uuid
+
+    with session_scope() as session:
+        campaign = Campaign(
+            campaign_id=str(uuid.uuid4()),
+            campaign_name=name,
+            description=description,
+            risk_level=risk_level,
+            email_count=0,
+        )
+        session.add(campaign)
+        session.flush()
+        return _campaign_dict(campaign)
+
+
+def list_campaigns(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+    with session_scope() as session:
+        campaigns = session.scalars(
+            select(Campaign).order_by(Campaign.last_seen.desc().nullslast(), Campaign.first_seen.desc().nullslast()).limit(limit).offset(offset)
+        ).all()
+        return [_campaign_dict(campaign) for campaign in campaigns]
+
+
+def get_campaign(campaign_id: str) -> Dict[str, Any] | None:
+    with session_scope() as session:
+        campaign = session.scalar(select(Campaign).where(Campaign.campaign_id == campaign_id))
+        if campaign is None:
+            return None
+        result = _campaign_dict(campaign)
+        result["cases"] = [
+            {"case_id": link.case.analysis_id, "similarity_score": link.similarity_score}
+            for link in campaign.indicators
+        ]
+        result["indicators"] = [
+            {"type": link.ioc.ioc_type, "value": link.ioc.value}
+            for link in campaign.indicators
+        ]
+        return result
+
+
+def attach_case_to_campaign(campaign_id: str, analysis_id: str, similarity_score: float | None = None) -> Dict[str, Any] | None:
+    with session_scope() as session:
+        campaign = session.scalar(select(Campaign).where(Campaign.campaign_id == campaign_id))
+        case = session.scalar(select(AnalysisCase).where(AnalysisCase.analysis_id == analysis_id))
+        if campaign is None or case is None:
+            return None
+        for link in case.ioc_links:
+            existing = session.scalar(select(CampaignIndicator).where(
+                CampaignIndicator.campaign_id == campaign.id,
+                CampaignIndicator.ioc_id == link.ioc_id,
+                CampaignIndicator.case_id == case.id,
+            ))
+            if existing is None:
+                campaign.indicators.append(CampaignIndicator(
+                    ioc=link.ioc,
+                    case=case,
+                    similarity_score=similarity_score,
+                ))
+        campaign.email_count = len({link.case_id for link in campaign.indicators})
+        now = case.updated_at or case.created_at
+        campaign.first_seen = min(filter(None, [campaign.first_seen, case.created_at]), default=case.created_at)
+        campaign.last_seen = max(filter(None, [campaign.last_seen, now]), default=now)
+        session.add(AuditLog(
+            actor="analyst",
+            action="CASE_ATTACHED_TO_CAMPAIGN",
+            resource_type="campaign",
+            resource_id=campaign_id,
+            metadata_json={"analysis_id": analysis_id, "similarity_score": similarity_score},
+        ))
+        session.flush()
+        return _campaign_dict(campaign)
+
+
 def _case_dict(case: AnalysisCase) -> Dict[str, Any]:
     return {
         "analysis_id": case.analysis_id,
@@ -253,6 +341,18 @@ def _alert_dict(alert: Alert) -> Dict[str, Any]:
         "message": alert.message,
         "created_at": alert.created_at.isoformat() if alert.created_at else None,
         "delivery_status": alert.delivery_status,
+    }
+
+
+def _campaign_dict(campaign: Campaign) -> Dict[str, Any]:
+    return {
+        "campaign_id": campaign.campaign_id,
+        "name": campaign.campaign_name,
+        "description": campaign.description,
+        "risk_level": campaign.risk_level,
+        "first_seen": campaign.first_seen.isoformat() if campaign.first_seen else None,
+        "last_seen": campaign.last_seen.isoformat() if campaign.last_seen else None,
+        "email_count": campaign.email_count,
     }
 
 

@@ -111,7 +111,10 @@ def compute_risk(
         add("return_path_mismatch", 3, 3, "Return-Path domain differs from sender", "Sender identity mismatch detected")
 
     # ---- 5. Authentication
-    spf, dkim, dmarc = auth.get("spf"), auth.get("dkim"), auth.get("dmarc")
+    independent = auth.get("independent_validation") or {}
+    spf = (independent.get("spf") or {}).get("status", auth.get("spf"))
+    dkim = (independent.get("dkim") or {}).get("status", auth.get("dkim"))
+    dmarc = (independent.get("dmarc") or {}).get("status", auth.get("dmarc"))
     if spf == "fail":
         add("spf_fail", 6, 6, "SPF authentication failed", "Email authentication failed")
     elif spf == "softfail":

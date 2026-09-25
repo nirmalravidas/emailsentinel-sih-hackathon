@@ -77,8 +77,10 @@ def build_pdf(report: Dict[str, Any]) -> bytes:
     email = report.get("email_summary", {})
     identity = report.get("identity_analysis", {})
     authentication = report.get("authentication", {})
+    independent_auth = authentication.get("independent_validation", {})
     relay = report.get("relay_analysis", {})
     geolocation = report.get("geolocation", {})
+    threat_intelligence = report.get("threat_intelligence", {})
     iocs = report.get("indicators_of_compromise", {})
     story = [
         Paragraph("EmailSentinel Forensic Report", styles["ReportTitle"]),
@@ -93,8 +95,10 @@ def build_pdf(report: Dict[str, Any]) -> bytes:
     origin = geolocation.get("probable_origin_ip") or {}
     story.append(_facts([("IP", origin.get("ip")), ("City", origin.get("city")), ("Region", origin.get("region")), ("Country", origin.get("country")), ("ISP", origin.get("isp")), ("Organization", origin.get("organization")), ("ASN", origin.get("asn")), ("Status", origin.get("status") or geolocation.get("status"))], styles))
     story.extend([
+        Paragraph("THREAT INTELLIGENCE CORRELATION", styles["Section"]),
+        _json_block(threat_intelligence, styles["code"]),
         Paragraph("AUTHENTICATION AND IDENTITY", styles["Section"]),
-        _facts([("SPF", authentication.get("spf")), ("DKIM", authentication.get("dkim")), ("DMARC", authentication.get("dmarc")), ("Identity mismatch", identity.get("identity_mismatch")), ("Lookalike brand", identity.get("matched_brand"))], styles),
+        _facts([("SPF header", authentication.get("spf")), ("SPF independently verified", (independent_auth.get("spf") or {}).get("status")), ("DKIM header", authentication.get("dkim")), ("DKIM cryptographically verified", (independent_auth.get("dkim") or {}).get("status")), ("DMARC header", authentication.get("dmarc")), ("DMARC independently validated", (independent_auth.get("dmarc") or {}).get("status")), ("SPF aligned", (independent_auth.get("dmarc") or {}).get("spf_aligned")), ("DKIM aligned", (independent_auth.get("dmarc") or {}).get("dkim_aligned")), ("Identity mismatch", identity.get("identity_mismatch")), ("Lookalike brand", identity.get("matched_brand"))], styles),
         Paragraph("RELAY ANALYSIS", styles["Section"]),
         _facts([("Probable origin IP", relay.get("probable_origin_ip")), ("Hop count", relay.get("hop_count")), ("Chain order", relay.get("chain_order")), ("Path summary", relay.get("path_summary"))], styles),
         Paragraph("INDICATORS OF COMPROMISE", styles["Section"]),

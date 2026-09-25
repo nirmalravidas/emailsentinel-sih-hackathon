@@ -112,3 +112,13 @@ class AnalysisStatusResponse(BaseModel):
 class CaseStatusUpdate(BaseModel):
     status: str = Field(..., pattern="^(NEW|ANALYZING|REVIEW|CONFIRMED_THREAT|FALSE_POSITIVE|CLOSED)$")
     analyst_notes: Optional[str] = Field(None, max_length=10000)
+
+
+class CampaignCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=10000)
+    risk_level: Optional[str] = Field(None, pattern="^(LOW|MEDIUM|HIGH|CRITICAL)$")
+
+
+class CampaignCaseAttach(BaseModel):
+    similarity_score: Optional[float] = Field(None, ge=0, le=1)

@@ -18,6 +18,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     database.init_db()
+    database.purge_expired_cases()
     nlp_service.get_model()  # loads the saved model, or trains one if it is missing
     yield
 

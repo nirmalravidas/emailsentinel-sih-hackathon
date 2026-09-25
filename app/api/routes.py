@@ -11,10 +11,11 @@ from fastapi.responses import JSONResponse, Response
 
 from app import config
 from app.database import database
-from app.models.schemas import AnalysisResponse, AnalysisStatusResponse, CaseStatusUpdate, CasesResponse, NLPRequest, NLPResponse
+from app.models.schemas import AnalysisResponse, AnalysisStatusResponse, CampaignCaseAttach, CampaignCreate, CaseStatusUpdate, CasesResponse, NLPRequest, NLPResponse
 from app.services import analysis_service
 from app.services import alert_service
 from app.services import report_service
+from app.services import privacy_service
 from app.workers.tasks import analyze_email_task
 from app.services import (
     dns_service,
@@ -47,7 +48,7 @@ def analyze_email(
     file: Optional[UploadFile] = File(None, description="A .eml file to analyze"),
     raw_email: Optional[str] = Form(None, description="OR paste the full raw email (headers + body) here"),
 ):
-    """Run the full EmailSentinel pipeline and return one JSON forensic result.
+    """Run the shared EmailSentinel pipeline and persist one forensic result.
 
     Provide **either** an `.eml` file **or** `raw_email` text. If both are given the file wins.
     URLs are never opened; only DNS and IP-geolocation lookups leave the server.
@@ -80,7 +81,12 @@ def analyze_email(
             "original_filename": original_filename,
             "raw_email_size": len(raw),
         })
-        task = analyze_email_task.delay(analysis_id, base64.b64encode(raw).decode("ascii"), evidence_hash)
+        task = analyze_email_task.delay(
+            analysis_id,
+            base64.b64encode(raw).decode("ascii"),
+            evidence_hash,
+            original_filename,
+        )
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
             content={
@@ -90,6 +96,37 @@ def analyze_email(
                 "status": "QUEUED",
             },
         )
+
+    try:
+        response = analysis_service.analyze_raw_email(
+            raw,
+            evidence_hash=evidence_hash,
+            analysis_id=analysis_id,
+            original_filename=original_filename,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    assessment = response["threat_assessment"]
+    email_summary = response["email_summary"]
+    stored_response = privacy_service.mask_report(response)
+    database.save_case({
+        "analysis_id": analysis_id,
+        "status": "COMPLETED",
+        "subject": email_summary["subject"],
+        "sender": email_summary["from"],
+        "classification": assessment["classification"],
+        "risk_score": assessment["risk_score"],
+        "risk_level": assessment["risk_level"],
+        "probable_origin_ip": response["relay_analysis"]["probable_origin_ip"],
+        "raw_email_hash": evidence_hash,
+        "original_filename": original_filename,
+        "raw_email_size": len(raw),
+        "forensic_report": stored_response,
+        "indicators_of_compromise": response["indicators_of_compromise"],
+    })
+    alert_service.maybe_create_risk_alert(analysis_id, assessment["risk_level"], assessment["risk_score"])
+    return stored_response
 
     # 1. parse -------------------------------------------------------------
     parsed = email_parser.parse_email(raw)
@@ -107,7 +144,7 @@ def analyze_email(
     # 3. headers -----------------------------------------------------------
     identity = header_analyzer.analyze_identity(parsed)
     relay = header_analyzer.analyze_received(parsed)
-    auth = header_analyzer.analyze_authentication(parsed)
+    auth = header_analyzer.analyze_authentication(raw=raw, parsed=parsed, origin_ip=relay["probable_origin_ip"])
 
     # 4. URLs --------------------------------------------------------------
     urls = url_analyzer.analyze_urls(parsed["urls"])
@@ -335,6 +372,32 @@ def get_alert(alert_id: int):
     if alert is None:
         raise HTTPException(status_code=404, detail="Alert not found")
     return alert
+
+
+@router.post("/campaigns", tags=["Campaigns"], summary="Create an investigation campaign")
+def create_campaign(body: CampaignCreate):
+    return database.create_campaign(body.name, body.description, body.risk_level)
+
+
+@router.get("/campaigns", tags=["Campaigns"], summary="List investigation campaigns")
+def list_campaigns(limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)):
+    return {"limit": limit, "offset": offset, "campaigns": database.list_campaigns(limit, offset)}
+
+
+@router.get("/campaigns/{campaign_id}", tags=["Campaigns"], summary="Get campaign cases and indicators")
+def get_campaign(campaign_id: str):
+    campaign = database.get_campaign(campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return campaign
+
+
+@router.post("/campaigns/{campaign_id}/cases/{case_id}", tags=["Campaigns"], summary="Attach a case to a campaign")
+def attach_campaign_case(campaign_id: str, case_id: str, body: CampaignCaseAttach | None = None):
+    campaign = database.attach_case_to_campaign(campaign_id, case_id, body.similarity_score if body else None)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign or case not found")
+    return campaign
 
 
 @router.post("/nlp/analyze", response_model=NLPResponse, tags=["NLP"], summary="Classify a piece of text")

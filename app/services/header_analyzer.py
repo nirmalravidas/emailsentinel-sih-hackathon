@@ -6,6 +6,10 @@ import re
 from email.utils import parseaddr, parsedate_to_datetime
 from typing import Any, Dict, List, Optional
 
+import dkim
+import spf
+import dns.resolver
+
 from app.services.domain_analyzer import BRAND_INFO, domain_of, registrable_domain
 
 ORIGIN_NOTE = (
@@ -14,8 +18,8 @@ ORIGIN_NOTE = (
 )
 AUTH_NOTE = (
     "Values are read from the Authentication-Results / Received-SPF headers added by the receiving mail "
-    "server. EmailSentinel does not perform cryptographic DKIM verification or live SPF/DMARC checks, and "
-    "these headers can be forged if the message did not pass through a trusted receiver."
+    "server. These header values are retained as receiver evidence and can be forged if the message did not "
+    "pass through a trusted receiver; independent_validation contains fresh DNS, SPF, DMARC, and DKIM checks."
 )
 
 
@@ -186,7 +190,74 @@ def analyze_received(parsed: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- SPF / DKIM / DMARC
-def analyze_authentication(parsed: Dict[str, Any]) -> Dict[str, Any]:
+def _domain_from_address(value: Optional[str]) -> Optional[str]:
+    _, address = parseaddr(value or "")
+    return address.rsplit("@", 1)[-1].lower().strip() if "@" in address else None
+
+
+def _organizational_domain(domain: Optional[str]) -> Optional[str]:
+    return registrable_domain(domain)
+
+
+def _parse_dmarc_policy(domain: Optional[str]) -> Dict[str, Any]:
+    if not domain:
+        return {"status": "unknown", "reason": "From domain is unavailable"}
+    try:
+        answers = dns.resolver.resolve(f"_dmarc.{domain}", "TXT", lifetime=3.0)
+        records = [b"".join(item.strings).decode("utf-8", errors="replace") for item in answers]
+    except dns.resolver.NXDOMAIN:
+        records = []
+    except Exception as exc:
+        return {"status": "temperror", "reason": f"DMARC DNS lookup failed: {type(exc).__name__}"}
+    record = next((item for item in records if re.search(r"(?:^|;)\s*v=DMARC1", item, re.I)), None)
+    if not record:
+        return {"status": "none", "policy": "none", "record": None}
+    tags = {}
+    for part in record.split(";"):
+        if "=" in part:
+            key, value = part.strip().split("=", 1)
+            tags[key.lower()] = value.strip()
+    return {
+        "status": "found",
+        "policy": tags.get("p", "none").lower(),
+        "subdomain_policy": tags.get("sp", tags.get("p", "none")).lower(),
+        "alignment_dkim": tags.get("adkim", "r").lower(),
+        "alignment_spf": tags.get("aspf", "r").lower(),
+        "percentage": tags.get("pct", "100"),
+        "record": record,
+    }
+
+
+def _validate_spf(parsed: Dict[str, Any], from_domain: Optional[str], origin_ip: Optional[str]) -> Dict[str, Any]:
+    envelope_domain = _domain_from_address(parsed.get("return_path")) or from_domain
+    if not envelope_domain or not origin_ip:
+        return {"status": "unknown", "domain": envelope_domain, "ip": origin_ip, "reason": "Envelope domain or public origin IP unavailable"}
+    try:
+        result, code, explanation = spf.check2(origin_ip, envelope_domain, "emailsentinel.local")
+        return {"status": result.lower(), "domain": envelope_domain, "ip": origin_ip, "dns_code": code, "explanation": explanation}
+    except Exception as exc:
+        return {"status": "temperror", "domain": envelope_domain, "ip": origin_ip, "reason": f"SPF evaluation failed: {type(exc).__name__}"}
+
+
+def _validate_dkim(raw: Optional[bytes], parsed: Dict[str, Any]) -> Dict[str, Any]:
+    signatures = parsed.get("dkim_signature") or []
+    domains = []
+    for signature in signatures:
+        match = re.search(r"(?:^|;)\s*d\s*=\s*([^;\s]+)", signature, re.I)
+        if match:
+            domains.append(match.group(1).strip().lower())
+    if not signatures:
+        return {"status": "none", "signature_domains": []}
+    if not raw:
+        return {"status": "unknown", "signature_domains": domains, "reason": "Raw message unavailable for verification"}
+    try:
+        verified = bool(dkim.verify(raw))
+        return {"status": "pass" if verified else "fail", "signature_domains": domains, "verified_cryptographically": verified}
+    except Exception as exc:
+        return {"status": "temperror", "signature_domains": domains, "reason": f"DKIM verification failed: {type(exc).__name__}"}
+
+
+def analyze_authentication(parsed: Dict[str, Any], raw: Optional[bytes] = None, origin_ip: Optional[str] = None) -> Dict[str, Any]:
     seen: Dict[str, List[str]] = {"spf": [], "dkim": [], "dmarc": []}
     for header in parsed.get("authentication_results") or []:
         for mech, value in re.findall(r"\b(spf|dkim|dmarc)\s*=\s*([a-z]+)", header, re.I):
@@ -205,9 +276,47 @@ def analyze_authentication(parsed: Dict[str, Any]) -> Dict[str, Any]:
             result["spf"] = m.group(1).lower()
             source = source or "Received-SPF"
 
+    from_domain = _domain_from_address(parsed.get("from"))
+    spf_validation = _validate_spf(parsed, from_domain, origin_ip)
+    dkim_validation = _validate_dkim(raw, parsed)
+    dmarc_policy = _parse_dmarc_policy(from_domain)
+    envelope_domain = spf_validation.get("domain")
+    spf_aligned = (
+        spf_validation.get("status") == "pass"
+        and envelope_domain
+        and from_domain
+        and (_organizational_domain(envelope_domain) == _organizational_domain(from_domain)
+             if dmarc_policy.get("alignment_spf", "r") == "r"
+             else envelope_domain == from_domain)
+    )
+    dkim_aligned = any(
+        dkim_validation.get("status") == "pass"
+        and domain
+        and from_domain
+        and (_organizational_domain(domain) == _organizational_domain(from_domain)
+             if dmarc_policy.get("alignment_dkim", "r") == "r"
+             else domain == from_domain)
+        for domain in dkim_validation.get("signature_domains", [])
+    )
+    dmarc_status = "pass" if dmarc_policy.get("status") == "found" and (spf_aligned or dkim_aligned) else (
+        "fail" if dmarc_policy.get("status") == "found" else "none"
+    )
+
     return {
         **result,
         "source": source or "none",
         "dkim_signature_present": bool(parsed.get("dkim_signature")),
         "note": AUTH_NOTE,
+        "independent_validation": {
+            "spf": spf_validation,
+            "dkim": dkim_validation,
+            "dmarc": {
+                **dmarc_policy,
+                "status": dmarc_status,
+                "from_domain": from_domain,
+                "spf_aligned": bool(spf_aligned),
+                "dkim_aligned": bool(dkim_aligned),
+            },
+        },
+        "validation_note": "Independent checks use DNS and DKIM cryptographic verification; results can fail when DNS, keys, or the original message are unavailable.",
     }

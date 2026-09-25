@@ -24,6 +24,10 @@ DATASET_PATH = Path(_env("DATASET_PATH", str(BASE_DIR / "data" / "email_dataset.
 MODEL_PATH = Path(_env("MODEL_PATH", str(BASE_DIR / "models" / "email_nlp_model.joblib")))
 DATABASE_PATH = Path(_env("DATABASE_PATH", str(BASE_DIR / "data" / "emailsentinel.db")))
 DATABASE_URL = _env("DATABASE_URL", f"sqlite:///{DATABASE_PATH}")
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL[len("postgres://"):]
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL[len("postgresql://"):]
 DATABASE_ECHO = _bool("DATABASE_ECHO", False)
 
 # External lookups (all optional and fail gracefully)
@@ -33,8 +37,16 @@ ENABLE_WHOIS = _bool("ENABLE_WHOIS", False)  # slow and often rate limited, off 
 GEO_API_URL = _env("GEO_API_URL", "http://ip-api.com/json")
 HTTP_TIMEOUT = float(_env("HTTP_TIMEOUT", "4"))
 DNS_TIMEOUT = float(_env("DNS_TIMEOUT", "2.5"))
+THREAT_INTEL_ENABLED = _bool("THREAT_INTEL_ENABLED", False)
+ABUSEIPDB_API_KEY = _env("ABUSEIPDB_API_KEY", "")
+TOR_EXIT_LIST_URL = _env("TOR_EXIT_LIST_URL", "https://check.torproject.org/torbulkexitlist")
+THREAT_INTEL_TIMEOUT = float(_env("THREAT_INTEL_TIMEOUT", "5"))
+THREAT_INTEL_DNSBL = _env("THREAT_INTEL_DNSBL", "zen.spamhaus.org")
 
 MAX_EMAIL_BYTES = int(_env("MAX_EMAIL_BYTES", str(5 * 1024 * 1024)))
+MASK_SENSITIVE_FIELDS = _bool("MASK_SENSITIVE_FIELDS", False)
+RETENTION_ENABLED = _bool("RETENTION_ENABLED", False)
+RETENTION_DAYS = int(_env("RETENTION_DAYS", "365"))
 
 # Redis is optional for local/offline analysis. PostgreSQL remains the source of truth.
 REDIS_ENABLED = _bool("REDIS_ENABLED", True)
