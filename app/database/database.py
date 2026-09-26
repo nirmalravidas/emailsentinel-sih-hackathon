@@ -107,6 +107,21 @@ def get_case(analysis_id: str) -> Dict[str, Any] | None:
         return _case_dict(case) if case else None
 
 
+def delete_case(analysis_id: str) -> bool:
+    with session_scope() as session:
+        case = session.scalar(select(AnalysisCase).where(AnalysisCase.analysis_id == analysis_id))
+        if case is None:
+            return False
+        session.add(AuditLog(
+            actor="analyst",
+            action="CASE_DELETED",
+            resource_type="analysis_case",
+            resource_id=analysis_id,
+        ))
+        session.delete(case)
+        return True
+
+
 def get_case_iocs(analysis_id: str) -> List[Dict[str, Any]] | None:
     with session_scope() as session:
         case = session.scalar(select(AnalysisCase).where(AnalysisCase.analysis_id == analysis_id))

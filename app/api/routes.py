@@ -301,6 +301,13 @@ def get_case(case_id: str):
     return case
 
 
+@router.delete("/cases/{case_id}", tags=["Cases"], summary="Delete an analysis case")
+def delete_case(case_id: str):
+    if not database.delete_case(case_id):
+        raise HTTPException(status_code=404, detail="Case not found")
+    return {"deleted": True, "case_id": case_id}
+
+
 @router.get("/cases/{case_id}/timeline", tags=["Cases"], summary="Get case forensic timeline")
 def get_case_timeline(case_id: str):
     timeline = database.case_timeline(case_id)

@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EmailSentinel | Forensic Console</title>
-  <link rel="stylesheet" href="/frontend/styles.css">
+  <link rel="stylesheet" href="/frontend/styles.css?v=5">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand"><span class="brand-mark">ES</span><div><strong>EmailSentinel</strong><small>FORENSIC CONSOLE</small></div></div>
-    <a href="/docs" target="_blank" rel="noreferrer">API docs <span>↗</span></a>
+    <div class="topbar-actions"><button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch to dark mode" title="Switch to dark mode">◐</button><a href="/docs" target="_blank" rel="noreferrer">API docs <span>↗</span></a></div>
   </header>
   <main class="shell">
     <section class="hero"><div><p class="eyebrow">MAIL THREAT INTELLIGENCE</p><h1>Turn suspicious mail into a clear decision.</h1><p class="lede">Upload an .eml file and inspect every signal from the analysis pipeline in one workspace.</p></div><div class="pulse"><i></i><span>API connection</span><b id="apiState">checking</b></div></section>
@@ -22,7 +22,7 @@
       <section class="results" id="results"><div class="empty-state"><div class="empty-mark">+</div><p class="eyebrow">READY FOR EVIDENCE</p><h2>Your investigation will appear here</h2><p>Upload a message to see the risk decision, identity checks, network intelligence, and indicators of compromise.</p></div></section>
     </section>
   </main>
-  <script src="/frontend/app.js" defer></script>
+  <script src="/frontend/app.js?v=3" defer></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 </body>
