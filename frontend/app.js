@@ -2,6 +2,17 @@ const api = '/api/v1';
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const pretty = (value) => esc(JSON.stringify(value, null, 2));
+let activeCaseId = null;
+
+function setTheme(theme) {
+  const isDark = theme === 'dark';
+  document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
+  $('#themeToggle').textContent = isDark ? '☼' : '◐';
+  $('#themeToggle').setAttribute('aria-label', `Switch to ${isDark ? 'light' : 'dark'} mode`);
+  $('#themeToggle').title = `Switch to ${isDark ? 'light' : 'dark'} mode`;
+  document.querySelectorAll('.relay-graph').forEach((graph) => graph._emailSentinelNetwork?.setOptions({ nodes: { font: { color: isDark ? '#e6f3f7' : '#17211f' } }, edges: { font: { color: isDark ? '#e6f3f7' : '#17211f' } } }));
+  localStorage.setItem('emailsentinel-theme', isDark ? 'dark' : 'light');
+}
 
 async function request(path, options) {
   const response = await fetch(`${api}${path}`, options);
@@ -15,6 +26,7 @@ function chips(values) { return (values || []).length ? `<div class="chips">${va
 function facts(items) { return `<dl class="facts">${items.map(([key, value]) => `<dt>${esc(key)}</dt><dd>${esc(value || 'Not available')}</dd>`).join('')}</dl>`; }
 
 function renderReport(report, caseData = {}) {
+    activeCaseId = report.analysis_id || caseData.analysis_id || null;
   const threat = report.threat_assessment || {};
   const email = report.email_summary || {};
   const iocs = report.indicators_of_compromise || {};
@@ -59,6 +71,7 @@ function renderReport(report, caseData = {}) {
     const mapElement = $('#infrastructureMap');
     if (mapElement && window.L) {
       const map = L.map(mapElement, { scrollWheelZoom: false });
+      mapElement._emailSentinelMap = map;
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
       const bounds = [];
       locations.forEach((location) => {
@@ -84,7 +97,8 @@ function renderReport(report, caseData = {}) {
         edges.push({ from: `from-${index}`, to: `by-${index}`, arrows: 'to', label: hop.protocol || 'SMTP' });
         if (index < relay.relay_chain.length - 1) edges.push({ from: `by-${index}`, to: `from-${index + 1}`, arrows: 'to', dashes: true });
       });
-      new vis.Network(graphElement, { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) }, { autoResize: true, physics: { stabilization: true }, interaction: { hover: true }, nodes: { shape: 'dot', size: 18, font: { face: 'ui-monospace', size: 11, color: '#17211f' }, borderWidth: 2 }, groups: { origin: { color: { background: '#e67842', border: '#b44d43' } }, relay: { color: { background: '#c9e8d2', border: '#5f876b' } } }, edges: { color: '#819088', font: { face: 'ui-monospace', size: 9 } } });
+      const graphTextColor = document.documentElement.dataset.theme === 'dark' ? '#e6f3f7' : '#17211f';
+      graphElement._emailSentinelNetwork = new vis.Network(graphElement, { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) }, { autoResize: true, physics: { stabilization: true }, interaction: { hover: true }, nodes: { shape: 'dot', size: 18, font: { face: 'ui-monospace', size: 11, color: graphTextColor }, borderWidth: 2 }, groups: { origin: { color: { background: '#e67842', border: '#b44d43' } }, relay: { color: { background: '#c9e8d2', border: '#5f876b' } } }, edges: { color: '#819088', font: { face: 'ui-monospace', size: 9, color: graphTextColor } } });
     } else if (graphElement) {
       graphElement.innerHTML = '<p class="muted graph-fallback">No relay hops were available to graph.</p>';
     }
@@ -98,7 +112,7 @@ function renderReport(report, caseData = {}) {
     link.click();
     link.remove();
   }
-function showTab(tab) { document.querySelectorAll('.tab').forEach((button) => button.classList.toggle('active', button.dataset.tab === tab)); ['overview','network','case','raw'].forEach((name) => { const element = $(`#tab-${name}`); if (element) element.hidden = name !== tab; }); }
+function showTab(tab) { document.querySelectorAll('.tab').forEach((button) => button.classList.toggle('active', button.dataset.tab === tab)); ['overview','network','case','raw'].forEach((name) => { const element = $(`#tab-${name}`); if (element) element.hidden = name !== tab; }); if (tab === 'network') requestAnimationFrame(() => $('#infrastructureMap')?._emailSentinelMap?.invalidateSize()); }
 
 async function loadCaseExtras(caseId) {
   try {
@@ -112,7 +126,25 @@ async function loadCase(caseId) {
 }
 
 async function loadCases() {
-  try { const data = await request('/cases?limit=20'); $('#caseList').innerHTML = data.cases.length ? data.cases.map((item) => `<div class="case-item" data-case="${esc(item.analysis_id)}"><div class="case-subject">${esc(item.subject || 'Untitled message')}</div><div class="case-meta"><span>${esc(item.classification || 'queued')} · ${esc(item.risk_score ?? '—')}</span><span class="badge ${riskClass(item.risk_level)}">${esc(item.risk_level || item.status || 'NEW')}</span></div></div>`).join('') : '<p class="muted">No cases yet.</p>'; document.querySelectorAll('[data-case]').forEach((item) => item.addEventListener('click', () => loadCase(item.dataset.case))); } catch (error) { $('#caseList').innerHTML = `<p class="muted">${esc(error.message)}</p>`; }
+  try { const data = await request('/cases?limit=20'); $('#caseList').innerHTML = data.cases.length ? data.cases.map((item) => `<div class="case-item" data-case="${esc(item.analysis_id)}"><button class="case-open" type="button"><span class="case-subject">${esc(item.subject || 'Untitled message')}</span><span class="case-meta"><span>${esc(item.classification || 'queued')} · ${esc(item.risk_score ?? '—')}</span><span class="badge ${riskClass(item.risk_level)}">${esc(item.risk_level || item.status || 'NEW')}</span></span></button><button class="delete-case" type="button" data-delete-case="${esc(item.analysis_id)}" aria-label="Delete case ${esc(item.subject || item.analysis_id)}" title="Delete case">×</button></div>`).join('') : '<p class="muted">No cases yet.</p>'; document.querySelectorAll('.case-open').forEach((button) => button.addEventListener('click', () => loadCase(button.closest('[data-case]').dataset.case))); document.querySelectorAll('[data-delete-case]').forEach((button) => button.addEventListener('click', deleteCase)); } catch (error) { $('#caseList').innerHTML = `<p class="muted">${esc(error.message)}</p>`; }
+}
+
+async function deleteCase(event) {
+  const button = event.currentTarget;
+  const caseId = button.dataset.deleteCase;
+  if (!window.confirm('Delete this case and its forensic data? This cannot be undone.')) return;
+  button.disabled = true;
+  try {
+    await request(`/cases/${encodeURIComponent(caseId)}`, { method: 'DELETE' });
+    if (activeCaseId === caseId) {
+      activeCaseId = null;
+      $('#results').innerHTML = '<div class="empty-state"><div class="empty-mark">+</div><p class="eyebrow">READY FOR EVIDENCE</p><h2>Your investigation will appear here</h2><p>Upload a message to see the risk decision, identity checks, network intelligence, and indicators of compromise.</p></div>';
+    }
+    await loadCases();
+  } catch (error) {
+    button.disabled = false;
+    window.alert(error.message);
+  }
 }
 
 async function checkApi() { try { await fetch('/health'); $('#apiState').textContent = 'online'; $('.pulse').classList.add('ok'); } catch { $('#apiState').textContent = 'offline'; } }
@@ -124,4 +156,7 @@ $('#emailFile').addEventListener('change', (event) => { $('#fileLabel').textCont
 ['dragleave','drop'].forEach((eventName) => $('#dropzone').addEventListener(eventName, (event) => { event.preventDefault(); $('#dropzone').classList.remove('drag'); }));
 $('#dropzone').addEventListener('drop', (event) => { $('#emailFile').files = event.dataTransfer.files; $('#fileLabel').textContent = event.dataTransfer.files[0]?.name || 'Choose an .eml file'; });
 $('#refreshCases').addEventListener('click', loadCases);
+$('#themeToggle').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
+const savedTheme = localStorage.getItem('emailsentinel-theme');
+setTheme(savedTheme === 'dark' ? 'dark' : 'light');
 checkApi(); loadCases();
